@@ -802,7 +802,6 @@ pub fn context_menu(x: i32) {
         MItem::new(t!("Персонализация", "Personalization")),
         MItem::new(t!("Диспетчер задач", "Task Manager")).hint("Ctrl+Shift+Esc").sep(),
         MItem::new(t!("Чистильщик диска", "Disk Cleaner")),
-        MItem::new(t!("Программы WinRust на English", "WinRust apps in Русский")), // shared with the other WinRust programs
         MItem::new(t!("Закрыть панель", "Close the bar")).danger().sep(),
     ];
     if pu {
@@ -817,7 +816,6 @@ pub fn context_menu(x: i32) {
             2 => open(&wide(&format!(r"{}\System32\taskmgr.exe", std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())))),
             3 => open_cleaner(),
             99 => crate::open_purge(),
-            4 => crate::i18n::set_english(!crate::i18n::english()),
             _ => _ = PostMessageW(FindWindowW(wide("topbar").as_ptr(), null()), WM_CLOSE, 0, 0), // quits the bar, brings the Windows taskbar back
         }
     });

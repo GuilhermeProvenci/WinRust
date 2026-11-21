@@ -22,8 +22,20 @@ jobs:
       - name: Test rust-search
         run: cargo test
         working-directory: plugins/rust-search
+      - name: Build offline language package
+        run: powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+      - name: Test translation audit tool
+        run: python -m unittest discover -s scripts -p test_i18n_catalog.py
+      - name: Audit language catalogs
+        run: |
+          python scripts/i18n-catalog.py audit --catalog locales/pt-BR.json --strict
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/i18n-catalog.py audit --catalog locales/ja.json --strict
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'push'
         with:
           name: WinRust
-          path: target/release/plugin-launcher.exe
+          path: |
+            target/release/plugin-launcher.exe
+            dist/WinRust-with-languages.zip

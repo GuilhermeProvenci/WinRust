@@ -826,6 +826,16 @@ name = "winrust-common"
 version = "0.1.0"
 dependencies = [
  "windows-sys",
+ "winrust-i18n-macros",
+]
+
+[[package]]
+name = "winrust-i18n-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

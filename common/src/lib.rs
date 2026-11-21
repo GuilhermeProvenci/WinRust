@@ -5,11 +5,14 @@
 //! Programs read the file once at start; the one that flips the switch updates its own texts at once.
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicU8, Ordering::Relaxed},
+    sync::atomic::{AtomicU8, AtomicU64, Ordering::Relaxed},
 };
+extern crate self as winrust_common;
+pub use winrust_i18n_macros::localized_format;
 
 pub mod desktop;
 pub mod journal;
+pub mod locales;
 pub mod mem;
 pub mod mft;
 pub mod proc;
@@ -27,32 +30,72 @@ pub fn reveal(path: &str) {
     };
 }
 
-static LANG: AtomicU8 = AtomicU8::new(0); // 0 = not read yet, 1 = English, 2 = Russian
+static LANG: AtomicU8 = AtomicU8::new(0); // 0 = unread, 1 = English, 2 = Russian, 3 = pt-BR, 4 = ja
+static LANG_CHECK: AtomicU64 = AtomicU64::new(0);
 
 fn file() -> Option<PathBuf> {
-    std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("lang.txt"))
+    std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("WinRust").join("lang.txt"))
+}
+fn legacy_file() -> Option<PathBuf> { std::env::var_os("ProgramData").map(|p| PathBuf::from(p).join("WinRust").join("lang.txt")) }
+
+pub fn language() -> &'static str {
+    let mut value = LANG.load(Relaxed);
+    let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() }.saturating_add(1);
+    let checked = LANG_CHECK.load(Relaxed);
+    if (value == 0 || now.saturating_sub(checked) >= 1000) && LANG_CHECK.compare_exchange(checked, now, Relaxed, Relaxed).is_ok() {
+        let saved = file().and_then(|f| std::fs::read_to_string(f).ok())
+            .or_else(|| legacy_file().and_then(|f| std::fs::read_to_string(f).ok()));
+        value = match saved.as_deref().map(str::trim) {
+            Some(s) if s.eq_ignore_ascii_case("ru") => 2,
+            Some(s) if s.eq_ignore_ascii_case("pt-BR") || s.eq_ignore_ascii_case("pt") => 3,
+            Some(s) if s.eq_ignore_ascii_case("ja") => 4,
+            Some(_) => 1,
+            None => match (unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() } & 0x3ff) {
+                0x16 if locales::available("pt-BR") => 3,
+                0x11 if locales::available("ja") => 4,
+                0x19 => 2,
+                _ => 1,
+            },
+        };
+        LANG.store(value, Relaxed);
+    }
+    match value { 2 => "ru", 3 => "pt-BR", 4 => "ja", _ => "en" }
 }
 
 /// The current language at run time. In code that has unit tests use `en!()` instead: it is always Russian under `cargo test`.
 pub fn english() -> bool {
-    match LANG.load(Relaxed) {
-        1 => true,
-        2 => false,
-        _ => {
-            let ru = file().and_then(|f| std::fs::read_to_string(f).ok()).is_some_and(|s| s.trim().eq_ignore_ascii_case("ru"));
-            LANG.store(if ru { 2 } else { 1 }, Relaxed);
-            !ru
-        }
-    }
+    language() != "ru"
 }
 
 /// Switches this process and writes the choice for the other programs (they pick it up when they start).
 pub fn set_english(en: bool) {
-    LANG.store(if en { 1 } else { 2 }, Relaxed);
-    if let Some(f) = file() {
-        let _ = std::fs::create_dir_all(f.parent().unwrap());
-        let _ = std::fs::write(f, if en { "en" } else { "ru" });
+    let _ = set_language(if en { "en" } else { "ru" });
+}
+pub fn set_language(lang: &str) -> std::io::Result<()> {
+    let v = match lang { "en" => 1, "ru" => 2, "pt-BR" => 3, "ja" => 4,
+        _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsupported language")) };
+    if v >= 3 && !locales::available(lang) { return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "language pack is not installed")); }
+    let f = file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not available"))?;
+    write_language(&f, lang)?;
+    if let Some(legacy) = legacy_file() { let _ = write_language(&legacy, lang); }
+    LANG.store(v, Relaxed);
+    LANG_CHECK.store(unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() }.saturating_add(1), Relaxed);
+    Ok(())
+}
+fn write_language(f: &std::path::Path, lang: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(f.parent().unwrap())?;
+    let tmp = f.with_file_name(format!("lang-{}.tmp", std::process::id()));
+    std::fs::write(&tmp, lang)?;
+    use std::os::windows::ffi::OsStrExt;
+    let from: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<u16> = f.as_os_str().encode_wide().chain(Some(0)).collect();
+    if unsafe { windows_sys::Win32::Storage::FileSystem::MoveFileExW(from.as_ptr(), to.as_ptr(),
+        windows_sys::Win32::Storage::FileSystem::MOVEFILE_REPLACE_EXISTING | windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH) } == 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(tmp);
+        return Err(error);
     }
+    Ok(())
 }
 
 /// `en!()`: true for English. `cfg!(test)` is checked in the calling crate, so its unit tests keep their Russian expectations.
@@ -67,7 +110,7 @@ macro_rules! en {
 #[macro_export]
 macro_rules! t {
     ($ru:expr, $en:expr) => {
-        if $crate::en!() { $en } else { $ru }
+        if $crate::en!() { $crate::locales::lookup_current($en).unwrap_or($en) } else { $ru }
     };
 }
 
@@ -75,7 +118,7 @@ macro_rules! t {
 #[macro_export]
 macro_rules! tf {
     ($ru:literal, $en:literal $(, $a:expr)* $(,)?) => {
-        if $crate::en!() { format!($en $(, $a)*) } else { format!($ru $(, $a)*) }
+        if $crate::en!() { $crate::localized_format!($en $(, $a)*) } else { format!($ru $(, $a)*) }
     };
 }
 

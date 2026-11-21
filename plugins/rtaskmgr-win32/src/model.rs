@@ -128,7 +128,7 @@ pub struct Row {
 
 pub fn dec(v: f64, digits: usize) -> String {
     let s = format!("{:.*}", digits, v);
-    if en!() { s } else { s.replace('.', ",") }
+    if !en!() || winrust_common::language() == "pt-BR" { s.replace('.', ",") } else { s }
 }
 
 pub fn fmt_cpu(v: f32) -> String {
@@ -137,7 +137,7 @@ pub fn fmt_cpu(v: f32) -> String {
 
 pub fn fmt_mem_ru(b: u64) -> String {
     let mb = b as f64 / 1_048_576.0;
-    if mb >= 1000.0 { tf!("{} МБ", "{} MB", { let g = group_thousands(mb as u64); if en!() { g } else { g.replace(',', " ") } }) } else if mb >= 100.0 { tf!("{} МБ", "{} MB", dec(mb, 0)) } else { tf!("{} МБ", "{} MB", dec(mb, 1)) }
+    if mb >= 1000.0 { tf!("{} МБ", "{} MB", { let g = group_thousands(mb as u64); if !en!() { g.replace(',', " ") } else if winrust_common::language() == "pt-BR" { g.replace(',', ".") } else { g } }) } else if mb >= 100.0 { tf!("{} МБ", "{} MB", dec(mb, 0)) } else { tf!("{} МБ", "{} MB", dec(mb, 1)) }
 }
 
 pub fn fmt_disk_ru(bps: f64) -> String {

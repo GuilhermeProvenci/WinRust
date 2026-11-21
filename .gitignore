@@ -1,4 +1,7 @@
 target/
+/dist/
+/dist-locales/
+__pycache__/
 /share
 /ripgrep
 /payload/*.exe

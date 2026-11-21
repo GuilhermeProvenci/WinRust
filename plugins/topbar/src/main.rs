@@ -2370,7 +2370,7 @@ fn wstr_of(w: &[u16]) -> String {
 /// "1 окно", "3 окна", "5 окон".
 fn windows_ru(n: usize) -> String {
     if en!() {
-        return format!("{n} {}", if n == 1 { "window" } else { "windows" });
+        return format!("{n} {}", if n == 1 { t!("окно", "window") } else { t!("окна", "windows") });
     }
     let w = match (n % 10, n % 100) {
         (1, x) if x != 11 => "окно",
@@ -2622,6 +2622,7 @@ unsafe fn style_menu() {
         fly::MItem::head(t!("Панель", "Bar")).sep(),
         fly::MItem::new(t!("Положение, размер, поведение", "Position, size, behavior")).hint("›"),
         fly::MItem::new(t!("Разложить окна плиткой", "Tile the windows")),
+        fly::MItem::new(t!("Языки", "Languages")).hint("›").sep(),
         fly::MItem::new(t!("Сбросить всё по умолчанию…", "Reset everything to defaults…")).danger().sep(),
     ];
     gear_page("\u{E713}", t!("Настройки панели", "Bar settings"), t!("Вид панели и программ WinRust", "Look of the bar and the WinRust programs"), items, |i| match i {
@@ -2630,8 +2631,26 @@ unsafe fn style_menu() {
         3 => templates_page(),
         5 => bar_page(),
         6 => tile_windows(),
-        7 => reset_page(),
+        7 => language_page(),
+        8 => reset_page(),
         _ => {}
+    });
+}
+
+unsafe fn language_page() {
+    let mut choices = vec![("en", "English"), ("ru", "Русский")];
+    if i18n::locales::available("pt-BR") { choices.push(("pt-BR", "Português (Brasil)")); }
+    if i18n::locales::available("ja") { choices.push(("ja", "日本語")); }
+    let mut items = vec![back()];
+    items.extend(choices.iter().map(|(code, label)| fly::MItem::new(*label).on(i18n::language() == *code)));
+    gear_page("\u{E774}", t!("Языки", "Languages"), t!("Язык интерфейса WinRust", "WinRust display language"), items, move |i| {
+        if let Some((code, _)) = i.checked_sub(1).and_then(|n| choices.get(n)) {
+            if let Err(e) = i18n::set_language(code) {
+                let message = format!("{}: {e}", t!("Не удалось сохранить язык", "Could not save the language"));
+                MessageBoxW(BAR.load(Relaxed) as HWND, wide(&message).as_ptr(), wide("WinRust").as_ptr(), MB_OK | MB_ICONERROR);
+            }
+            language_page();
+        } else { style_menu(); }
     });
 }
 

@@ -13,9 +13,13 @@ test = false # the embedded manifest demands admin: a test exe could not start f
 name = "install-selection"
 path = "src/selection.rs"
 
+[[test]]
+name = "language-packs"
+path = "src/language_packs.rs"
+
 [dependencies]
 winrust-common = { path = "common" }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 embed-resource = "3"
@@ -24,6 +28,7 @@ embed-resource = "3"
 [workspace]
 members = [
     "common",
+    "i18n-macros",
     "ReShell",
     "plugins/topbar",
     "plugins/rtaskmgr-win32",

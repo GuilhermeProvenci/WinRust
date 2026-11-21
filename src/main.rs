@@ -10,6 +10,7 @@ extern crate winrust_common;
 use winrust_common as i18n;
 mod cli;
 mod install;
+mod language_packs;
 mod selection;
 mod ui;
 use {cli::*, install::*, selection::*, ui::*};
