@@ -1,5 +1,9 @@
+import contextlib
 import importlib.util
+import io
+import json
 import pathlib
+import sys
 import tempfile
 import unittest
 
@@ -21,6 +25,23 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(values['Open'], {'Abrir', 'Aberto'})
             self.assertEqual(required, {'Open', 'Close'})
             self.assertEqual(invalid, [])
+
+    def test_export_keeps_catalog_language(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / 'test.rs').write_text('pt!("r", "Open", "Abrir"); t!("r", "Close");', encoding='utf-8')
+            target = root / 'ja.json'
+            target.write_text('{"language": "ja", "messages": {"Close": "閉じる"}}', encoding='utf-8')
+            argv = sys.argv
+            sys.argv = ['i18n-catalog.py', 'export', '--source', str(root), '--catalog', str(target)]
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    catalog.main()
+            finally:
+                sys.argv = argv
+            result = json.loads(target.read_text(encoding='utf-8'))
+            self.assertEqual(result['language'], 'ja')
+            self.assertEqual(result['messages'], {'Close': '閉じる'})
 
 
 if __name__ == '__main__':

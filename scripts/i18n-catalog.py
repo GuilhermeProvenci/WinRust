@@ -65,14 +65,15 @@ def main():
     found, required, invalid = extract(args.source.resolve())
     if args.action == 'export':
         existing = json.loads(args.catalog.read_text(encoding='utf-8')) if args.catalog.exists() else {}
+        language = existing.get('language', args.catalog.stem)
         messages = existing.get('messages', {})
         conflicts = {}
-        for en, candidates in found.items():
+        for en, candidates in (found.items() if language == 'pt-BR' else ()):
             if len(candidates) == 1:
                 messages.setdefault(en, next(iter(candidates)))
             elif en not in messages:
                 conflicts[en] = sorted(candidates)
-        result = {'language': 'pt-BR', 'messages': dict(sorted(messages.items())), 'needs_review': dict(sorted(conflicts.items()))}
+        result = {'language': language, 'messages': dict(sorted(messages.items())), 'needs_review': dict(sorted(conflicts.items()))}
         args.catalog.parent.mkdir(parents=True, exist_ok=True)
         args.catalog.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     else:
