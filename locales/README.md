@@ -6,6 +6,7 @@ O programa ainda usa as traduções compiladas no código; este arquivo **ainda 
 Para atualizar o levantamento, execute `python scripts/i18n-catalog.py export`.
 Para comparar com outro checkout, execute `python scripts/i18n-catalog.py audit --source CAMINHO`.
 A ferramenta preserva entradas já revisadas, indica textos sem tradução e confere os campos de formatação. Ela usa extração por padrões e pode precisar de revisão para expressões Rust que não sejam textos literais.
+Acrescente `--strict` para que textos faltantes ou ambíguos resultem em erro em verificações automatizadas.
 
 As entradas em `needs_review` têm mais de uma tradução para o mesmo texto em inglês. É necessário atribuir contexto antes de escolher uma tradução. Traduções importadas automaticamente também precisam de revisão humana.
 

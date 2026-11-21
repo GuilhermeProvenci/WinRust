@@ -60,6 +60,7 @@ def main():
     parser.add_argument('action', choices=('export', 'audit'))
     parser.add_argument('--source', type=pathlib.Path, default=ROOT)
     parser.add_argument('--catalog', type=pathlib.Path, default=ROOT / 'locales' / 'pt-BR.json')
+    parser.add_argument('--strict', action='store_true', help='return a failure for missing or ambiguous translations')
     args = parser.parse_args()
     found, required, invalid = extract(args.source.resolve())
     if args.action == 'export':
@@ -83,7 +84,7 @@ def main():
     for en in missing[:15]: print('MISSING:', repr(en))
     for en in bad[:15]: print('PLACEHOLDERS:', repr(en))
     if invalid: print('UNREADABLE:', ', '.join(invalid[:15]))
-    return 1 if bad or invalid else 0
+    return 1 if bad or invalid or (args.strict and (missing or result.get('needs_review'))) else 0
 
 
 if __name__ == '__main__':
