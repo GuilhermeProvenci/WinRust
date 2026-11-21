@@ -117,9 +117,9 @@ pub(crate) const ID_LANG: usize = 6; // EN / RU switch
 pub(crate) const ID_LP_EN: usize = 8;
 pub(crate) const ID_LP_JA: usize = 11;
 pub(crate) const ID_PACK_PT: usize = 12;
-pub(crate) const ID_PACK_JA: usize = 13;
-pub(crate) const ID_PACK_APPLY: usize = 14;
-pub(crate) const ID_PACK_CLOSE: usize = 15;
+pub(crate) const ID_PACK_JA: usize = 14;
+pub(crate) const ID_PACK_APPLY: usize = 15;
+pub(crate) const ID_PACK_CLOSE: usize = 16;
 pub(crate) const ID_SHELL: usize = 7; // settings panel: replace Explorer with rust-explorer
 pub(crate) const ID_CHECK: usize = 100; // + plugin index: the row's checkbox
 pub(crate) const STARTING: usize = usize::MAX - 1; // JOB before install_all picks its first component
@@ -198,7 +198,7 @@ pub(crate) fn rollback_box(w: f32) -> Box4 {
 
 /// Dialog panel and its (cancel, ok) buttons.
 pub(crate) fn dialog_boxes(w: f32) -> (Box4, Box4, Box4) {
-    let (dw, dh) = (528.0, 352.0);
+    let (dw, dh) = (528.0, 392.0);
     let (l, t) = ((w - dw) / 2.0, (WIN_H - dh) / 2.0);
     let (bt, r) = (t + dh - 24.0 - BTN_H, l + dw - 24.0);
     ([l, t, l + dw, t + dh], [r - BTN_W - 10.0 - 120.0, bt, r - BTN_W - 10.0, bt + BTN_H], [r - BTN_W, bt, r, bt + BTN_H])
@@ -385,7 +385,7 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
         for (i, name) in names.iter().enumerate() {
             let b = locale_choice_box(w, i);
             let id = ID_LP_EN + i;
-            let available = i < 2 || pack_available(i-2);
+            let available = i < 1 || pack_available(i-1);
             button(&ui, b, name, if !available {3} else if LANGUAGE_SELECTED.get()==i {0} else {1}, hot(id));
         }
         ui.text(t!("Языковые пакеты (из архива с языками)", "Optional language packs (from the languages ZIP)"), [d[0]+24.0,d[1]+174.0,d[2]-24.0,d[1]+202.0], 12.0, 600, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
@@ -396,7 +396,7 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
             ui.text(&label, b, 13.0, 400, if pack_available(i) {TEXT} else {DIM}, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         }
         let error = LANGUAGE_ERROR.with_borrow(|e| e.clone());
-        if !error.is_empty() { ui.text(&error, [d[0]+24.0,d[1]+270.0,d[2]-24.0,d[1]+294.0], 11.5, 400, BAD, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS); }
+        if !error.is_empty() { ui.text(&error, [d[0]+24.0,d[1]+306.0,d[2]-24.0,d[1]+328.0], 11.5, 400, BAD, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS); }
         button(&ui, cancel, t!("Отмена", "Cancel"), 1, hot(ID_PACK_CLOSE));
         button(&ui, apply, t!("Применить", "Apply"), 0, hot(ID_PACK_APPLY));
     }
@@ -480,8 +480,8 @@ thread_local! { pub(crate) static DIALOG: std::cell::RefCell<Option<Dialog>> = c
 thread_local! {
     static LANGUAGE_MENU: Cell<bool> = const { Cell::new(false) };
     static LANGUAGE_SELECTED: Cell<usize> = const { Cell::new(0) };
-    static PACK_SELECTED: Cell<[bool; 2]> = const { Cell::new([false; 2]) };
-    static PACK_AVAILABLE: Cell<[bool; 2]> = const { Cell::new([false; 2]) };
+    static PACK_SELECTED: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
+    static PACK_AVAILABLE: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
     static LANGUAGE_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 const LANGUAGES: [&str; 4] = ["en", "ru", "pt-BR", "ja"];
@@ -504,7 +504,7 @@ pub(crate) unsafe fn hit(hwnd: HWND, lp: isize) -> Option<usize> {
     if LANGUAGE_MENU.get() {
         let (_, cancel, apply) = dialog_boxes(w);
         for i in 0..4 { if inside(locale_choice_box(w, i)) { return Some(ID_LP_EN + i); } }
-        for i in 0..2 { if inside(pack_choice_box(w, i)) { return Some(ID_PACK_PT + i); } }
+        for i in 0..3 { if inside(pack_choice_box(w, i)) { return Some(ID_PACK_PT + i); } }
         return if inside(apply) { Some(ID_PACK_APPLY) } else if inside(cancel) { Some(ID_PACK_CLOSE) } else { None };
     }
     if SETTINGS.get().is_some() {
@@ -605,9 +605,9 @@ pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
             ID_PACK_CLOSE => LANGUAGE_MENU.set(false),
             ID_LP_EN..=ID_LP_JA => {
                 let i = id - ID_LP_EN;
-                if i < 2 || pack_available(i - 2) {
+                if i < 1 || pack_available(i - 1) {
                     LANGUAGE_SELECTED.set(i);
-                    if i >= 2 { let mut selected = PACK_SELECTED.get(); selected[i-2] = true; PACK_SELECTED.set(selected); }
+                    if i >= 1 { let mut selected = PACK_SELECTED.get(); selected[i-1] = true; PACK_SELECTED.set(selected); }
                 }
             }
             ID_PACK_PT..=ID_PACK_JA => {
@@ -625,7 +625,7 @@ pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
                     let target = crate::language_packs::installed_dir().ok_or(t!("ProgramData недоступна", "ProgramData unavailable"))?;
                     let codes: Vec<_> = crate::language_packs::PACKS.iter().enumerate().filter_map(|(i, (id, _))| selected[i].then_some(*id)).collect();
                     crate::language_packs::install(&source, &target, &codes)?;
-                    if matches!(language, "pt-BR" | "ja") && !crate::language_packs::valid_in(&target, language) {
+                    if matches!(language, "ru" | "pt-BR" | "ja") && !crate::language_packs::valid_in(&target, language) {
                         return Err(t!("Языковой пакет не установлен", "The selected language pack is not installed").into());
                     }
                     i18n::locales::retry_missing();

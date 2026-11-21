@@ -1,7 +1,7 @@
 //! Optional data-only catalogs distributed next to the installer.
 use std::{fs, io::Read, path::{Path, PathBuf}};
 
-pub const PACKS: [(&str, &str); 2] = [("pt-BR", "Português (Brasil)"), ("ja", "日本語")];
+pub const PACKS: [(&str, &str); 3] = [("ru", "Русский"), ("pt-BR", "Português (Brasil)"), ("ja", "日本語")];
 
 pub fn source_dir() -> Option<PathBuf> { Some(std::env::current_exe().ok()?.parent()?.join("locales")) }
 pub fn installed_dir() -> Option<PathBuf> { Some(PathBuf::from(std::env::var_os("ProgramData")?).join("WinRust/locales")) }

@@ -2369,13 +2369,13 @@ fn wstr_of(w: &[u16]) -> String {
 
 /// "1 окно", "3 окна", "5 окон".
 fn windows_ru(n: usize) -> String {
-    if en!() {
+    if !cfg!(test) && i18n::language() != "ru" {
         return format!("{n} {}", if n == 1 { t!("окно", "window") } else { t!("окна", "windows") });
     }
     let w = match (n % 10, n % 100) {
-        (1, x) if x != 11 => "окно",
-        (2..=4, x) if !(12..=14).contains(&x) => "окна",
-        _ => "окон",
+        (1, x) if x != 11 => t!("окно", "window"),
+        (2..=4, x) if !(12..=14).contains(&x) => t!("окна", "windows"),
+        _ => t!("окон", "windows"),
     };
     format!("{n} {w}")
 }
@@ -2638,7 +2638,8 @@ unsafe fn style_menu() {
 }
 
 unsafe fn language_page() {
-    let mut choices = vec![("en", "English"), ("ru", "Русский")];
+    let mut choices = vec![("en", "English")];
+    if i18n::locales::available("ru") { choices.push(("ru", "Русский")); }
     if i18n::locales::available("pt-BR") { choices.push(("pt-BR", "Português (Brasil)")); }
     if i18n::locales::available("ja") { choices.push(("ja", "日本語")); }
     let mut items = vec![back()];

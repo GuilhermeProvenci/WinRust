@@ -30,6 +30,8 @@ jobs:
         run: |
           python scripts/i18n-catalog.py audit --catalog locales/pt-BR.json --strict
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/i18n-catalog.py audit --catalog locales/ru.json --strict
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/i18n-catalog.py audit --catalog locales/ja.json --strict
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4

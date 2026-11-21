@@ -8,7 +8,7 @@ $out = Join-Path $root 'dist\WinRust'
 $locales = Join-Path $out 'locales'
 New-Item -ItemType Directory -Force -Path $locales | Out-Null
 Copy-Item -LiteralPath $Installer -Destination (Join-Path $out 'WinRust.exe') -Force
-foreach ($id in @('pt-BR', 'ja')) {
+foreach ($id in @('pt-BR', 'ja', 'ru')) {
     & python (Join-Path $PSScriptRoot 'build-language-pack.py') (Join-Path $root "locales\$id.json") (Join-Path $locales "$id.wrlang")
     if ($LASTEXITCODE -ne 0) { throw "Failed to build language pack $id" }
 }

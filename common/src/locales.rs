@@ -3,6 +3,8 @@
 use std::{collections::HashMap, io::Read, path::Path, sync::{OnceLock, atomic::{AtomicU64, Ordering::Relaxed}}};
 
 const LIMIT: u64 = 2 * 1024 * 1024;
+static RUSSIAN: OnceLock<HashMap<String, String>> = OnceLock::new();
+static RU_CHECK: AtomicU64 = AtomicU64::new(0);
 static PORTUGUESE: OnceLock<HashMap<String, String>> = OnceLock::new();
 static JAPANESE: OnceLock<HashMap<String, String>> = OnceLock::new();
 static PT_CHECK: AtomicU64 = AtomicU64::new(0);
@@ -58,7 +60,7 @@ fn load(locale: &str) -> Option<HashMap<String, String>> {
 }
 
 fn cached(locale: &str) -> Option<&'static HashMap<String, String>> {
-    let (cache, checked) = match locale { "pt-BR" => (&PORTUGUESE, &PT_CHECK), "ja" => (&JAPANESE, &JA_CHECK), _ => return None };
+    let (cache, checked) = match locale { "ru" => (&RUSSIAN, &RU_CHECK), "pt-BR" => (&PORTUGUESE, &PT_CHECK), "ja" => (&JAPANESE, &JA_CHECK), _ => return None };
     if cache.get().is_none() {
         let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() }.saturating_add(1);
         let old = checked.load(Relaxed);
@@ -70,8 +72,12 @@ fn cached(locale: &str) -> Option<&'static HashMap<String, String>> {
 }
 pub fn lookup(locale: &str, key: &str) -> Option<&'static str> { cached(locale)?.get(key).map(String::as_str) }
 pub fn lookup_current(key: &str) -> Option<&'static str> { lookup(super::language(), key) }
+pub const fn context_hash(text: &str) -> u64 { let bytes = text.as_bytes(); let mut i = 0; let mut hash = 14695981039346656037u64; while i < bytes.len() { hash = (hash ^ bytes[i] as u64).wrapping_mul(1099511628211); i += 1; } hash }
+pub fn lookup_context(english: &str, context: u64) -> Option<&'static str> {
+    if super::language() == "ru" { lookup("ru", &format!("{english}\u{1f}{context:016x}")) } else { lookup_current(english) }
+}
 pub fn available(locale: &str) -> bool { cached(locale).is_some() }
-pub fn retry_missing() { PT_CHECK.store(0, Relaxed); JA_CHECK.store(0, Relaxed); }
+pub fn retry_missing() { RU_CHECK.store(0, Relaxed); PT_CHECK.store(0, Relaxed); JA_CHECK.store(0, Relaxed); }
 
 /// Parse Rust-style placeholders and escaped braces. Implicit arguments are
 /// numbered in encounter order, so incompatible translations are rejected.

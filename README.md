@@ -12,7 +12,7 @@ English | [Русский](README.ru.md)
 
 ## Install
 
-1. Download `WinRust-with-languages.zip` from the [latest release](https://github.com/Lemxy/WinRust/releases/latest) and extract it (Windows 10/11, x64). The standalone `WinRust.exe` is also available with the built-in languages.
+1. Download `WinRust-with-languages.zip` from the [latest release](https://github.com/Lemxy/WinRust/releases/latest) and extract it (Windows 10/11, x64). The standalone `WinRust.exe` is also available in English.
 2. Run it as administrator.
 3. Tick the components you want and press the install button. On a fresh install, `rust-explorer` is unchecked. Tick it to replace the Windows Explorer shell (or use the gear on the topbar row: the **Shell: rust-explorer** switch). They are installed in the right order; one that fails or is skipped does not stop the others, the window lists what went wrong.
 
@@ -22,7 +22,7 @@ If UAC asks for **another administrator's** password, the per-user settings (sta
 
 **Update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
-Open **Languages** in the installer to select the display language and optional offline language packs. English and Russian are built in; Brazilian Portuguese and Japanese are separate files in the ZIP. The Windows display language is used on first run when its pack is available, and an existing preference is kept. Select the packs to install, then press **Apply**. Unchecking a pack does not remove an existing installation. You can change the active language later from the bar's settings. Restart already-running apps after updating a pack. If a pack is missing or invalid, text falls back to English.
+Open **Languages** in the installer to select the display language and optional offline language packs. English is built in; Brazilian Portuguese, Russian and Japanese are separate files in the ZIP. The Windows display language is used on first run when its pack is available, and an existing preference is kept. Select the packs to install, then press **Apply**. Unchecking a pack does not remove an existing installation. You can change the active language later from the bar's settings. Restart already-running apps after updating a pack. If a pack is missing or invalid, text falls back to English.
 
 ## Remove
 
@@ -160,3 +160,5 @@ Several plugins in one command are installed in the table's order (topbar before
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+
+Russian source translations are exported with context-aware keys using `python scripts/extract-russian-catalog.py`; audit with `python scripts/i18n-catalog.py audit --catalog locales/ru.json --strict`.

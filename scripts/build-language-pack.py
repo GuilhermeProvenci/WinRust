@@ -15,7 +15,7 @@ spec.loader.exec_module(audit)
 
 def build(catalog):
     locale = catalog['language']
-    if locale not in ('pt-BR', 'ja'): raise ValueError('unsupported locale')
+    if locale not in ('pt-BR', 'ja', 'ru'): raise ValueError('unsupported locale')
     if catalog.get('needs_review'): raise ValueError('resolve ambiguous translations before building')
     messages = catalog['messages']
     if len(messages) > 20_000: raise ValueError('too many messages')
@@ -28,7 +28,7 @@ def build(catalog):
     put(locale)
     output.extend(struct.pack('<I', len(messages)))
     for key, value in sorted(messages.items()):
-        if audit.fields(key) != audit.fields(value): raise ValueError(f'placeholder mismatch: {key!r}')
+        if audit.fields(key.split('\x1f', 1)[0]) != audit.fields(value): raise ValueError(f'placeholder mismatch: {key!r}')
         put(key)
         put(value)
     if len(output) > 2 * 1024 * 1024: raise ValueError('pack exceeds size limit')

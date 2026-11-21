@@ -19,7 +19,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 LITERAL = r'"(?:\\.|[^"\\])*"'
-CALL = re.compile(r'\b(?P<kind>ptf!|pt!|tf!|t!|Tr)\s*\(\s*(?P<ru>' + LITERAL + r')\s*,\s*(?P<en>' + LITERAL + r')(?:\s*,\s*(?P<pt>' + LITERAL + r'))?', re.S)
+CALL = re.compile(r'\b(?P<kind>ptf!|pt!|tf!|t!|Tr(?:::new)?)\s*\(\s*(?P<ru>' + LITERAL + r')\s*,\s*(?P<en>' + LITERAL + r')(?:\s*,\s*(?P<pt>' + LITERAL + r'))?', re.S)
 RUST_UNICODE = re.compile(r'\\u\{([0-9a-fA-F_]+)\}')
 FIELDS = re.compile(r'\{\{|\}\}|\{[^{}]*\}')
 
@@ -50,9 +50,24 @@ def extract(root):
                 invalid.append(f'{path.relative_to(root)}:{source.count(chr(10), 0, m.start()) + 1}')
                 continue
             needed.add(en)
-            if m.group('kind') in ('pt!', 'ptf!', 'Tr') and pt is not None:
+            if m.group('kind') in ('pt!', 'ptf!', 'Tr', 'Tr::new') and pt is not None:
                 values.setdefault(en, set()).add(pt)
     return values, needed, invalid
+
+
+def russian_pairs(root):
+    pairs = {}
+    for path in files(root):
+        for match in CALL.finditer(path.read_text(encoding='utf-8')):
+            en, ru = decode(match.group('en')), decode(match.group('ru'))
+            digest = 14695981039346656037
+            for byte in ru.encode('utf-8'):
+                digest = ((digest ^ byte) * 1099511628211) & 0xffffffffffffffff
+            key = f'{en}\x1f{digest:016x}'
+            if key in pairs and pairs[key] != ru:
+                raise ValueError(f'context collision in {path}')
+            pairs[key] = ru
+    return pairs
 
 
 def main():
@@ -80,13 +95,20 @@ def main():
     else:
         result = json.loads(args.catalog.read_text(encoding='utf-8'))
         messages = result['messages']
+    if result.get('language') == 'ru':
+        expected = russian_pairs(args.source.resolve())
+        required = set(expected)
+        wrong = [key for key in messages.keys() & expected.keys() if messages[key] != expected[key]]
+    else:
+        wrong = []
     missing = sorted(required - messages.keys())
-    bad = sorted(en for en, pt in messages.items() if fields(en) != fields(pt))
+    bad = sorted(en for en, pt in messages.items() if fields(en.split('\x1f', 1)[0]) != fields(pt))
     print(f'{len(messages)} catalog entries; {len(missing)} untranslated source messages; {len(result.get("needs_review", {}))} ambiguous keys; {len(bad)} placeholder mismatches; {len(invalid)} literals require manual review.')
     for en in missing[:15]: print('MISSING:', repr(en))
     for en in bad[:15]: print('PLACEHOLDERS:', repr(en))
+    if wrong: print('MISMATCHED RUSSIAN CONTEXTS:', len(wrong))
     if invalid: print('UNREADABLE:', ', '.join(invalid[:15]))
-    return 1 if bad or invalid or (args.strict and (missing or result.get('needs_review'))) else 0
+    return 1 if bad or invalid or wrong or (args.strict and (missing or result.get('needs_review'))) else 0
 
 
 if __name__ == '__main__':

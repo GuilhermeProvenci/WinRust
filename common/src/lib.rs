@@ -8,7 +8,7 @@ use std::{
     sync::atomic::{AtomicU8, AtomicU64, Ordering::Relaxed},
 };
 extern crate self as winrust_common;
-pub use winrust_i18n_macros::localized_format;
+pub use winrust_i18n_macros::{localized_format, localized_format_context};
 
 pub mod desktop;
 pub mod journal;
@@ -46,14 +46,14 @@ pub fn language() -> &'static str {
         let saved = file().and_then(|f| std::fs::read_to_string(f).ok())
             .or_else(|| legacy_file().and_then(|f| std::fs::read_to_string(f).ok()));
         value = match saved.as_deref().map(str::trim) {
-            Some(s) if s.eq_ignore_ascii_case("ru") => 2,
+            Some(s) if s.eq_ignore_ascii_case("ru") && locales::available("ru") => 2,
             Some(s) if s.eq_ignore_ascii_case("pt-BR") || s.eq_ignore_ascii_case("pt") => 3,
             Some(s) if s.eq_ignore_ascii_case("ja") => 4,
             Some(_) => 1,
             None => match (unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() } & 0x3ff) {
                 0x16 if locales::available("pt-BR") => 3,
                 0x11 if locales::available("ja") => 4,
-                0x19 => 2,
+                0x19 if locales::available("ru") => 2,
                 _ => 1,
             },
         };
@@ -74,7 +74,7 @@ pub fn set_english(en: bool) {
 pub fn set_language(lang: &str) -> std::io::Result<()> {
     let v = match lang { "en" => 1, "ru" => 2, "pt-BR" => 3, "ja" => 4,
         _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsupported language")) };
-    if v >= 3 && !locales::available(lang) { return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "language pack is not installed")); }
+    if v >= 2 && !locales::available(lang) { return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "language pack is not installed")); }
     let f = file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not available"))?;
     write_language(&f, lang)?;
     if let Some(legacy) = legacy_file() { let _ = write_language(&legacy, lang); }
@@ -109,16 +109,20 @@ macro_rules! en {
 /// `t!("русский", "english")`: a text in the current language.
 #[macro_export]
 macro_rules! t {
-    ($ru:expr, $en:expr) => {
-        if $crate::en!() { $crate::locales::lookup_current($en).unwrap_or($en) } else { $ru }
-    };
+    ($ru:literal, $en:expr) => {{
+        const CONTEXT: u64 = $crate::locales::context_hash($ru);
+        if cfg!(test) { $ru } else { $crate::locales::lookup_context($en, CONTEXT).unwrap_or($en) }
+    }};
+    ($ru:expr, $en:expr) => {{
+        if cfg!(test) { $ru } else { $crate::locales::lookup_context($en, $crate::locales::context_hash($ru)).unwrap_or($en) }
+    }};
 }
 
 /// `tf!("русский {}", "english {}", args...)`: format! in the current language (both templates are checked at compile time).
 #[macro_export]
 macro_rules! tf {
     ($ru:literal, $en:literal $(, $a:expr)* $(,)?) => {
-        if $crate::en!() { $crate::localized_format!($en $(, $a)*) } else { format!($ru $(, $a)*) }
+        if cfg!(test) { format!($ru $(, $a)*) } else { $crate::localized_format_context!($ru, $en $(, $a)*) }
     };
 }
 
