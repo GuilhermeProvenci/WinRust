@@ -2861,27 +2861,27 @@ unsafe fn reset_page() {
 unsafe fn start_menu() {
     let bar = BAR.load(Relaxed) as HWND;
     // (label, target); "!" targets are actions of ours, the rest goes through `open`
-    let tools: [(&str, &str, &str); 14] = [
-        ("Приложения и возможности", "Apps and Features", "ms-settings:appsfeatures"),
-        ("Электропитание", "Power Options", "powercfg.cpl"),
-        ("Просмотр событий", "Event Viewer", "eventvwr.msc"),
-        ("Система", "System", "ms-settings:about"),
-        ("Диспетчер устройств", "Device Manager", "devmgmt.msc"),
-        ("Сетевые подключения", "Network Connections", "ms-settings:network"),
-        ("Управление дисками", "Disk Management", "diskmgmt.msc"),
-        ("Управление компьютером", "Computer Management", "compmgmt.msc"),
-        ("Терминал", "Terminal", "!term"),
-        ("Диспетчер задач", "Task Manager", "taskmgr.exe"),
-        ("Параметры", "Settings", "ms-settings:"),
-        ("Проводник", "File Explorer", "shell:MyComputerFolder"),
-        ("Выполнить", "Run", "!run"),
-        ("Рабочий стол", "Desktop", "!desktop"),
+    let tools: [(&str, &str); 14] = [
+        (t!("Приложения и возможности", "Apps and Features"), "ms-settings:appsfeatures"),
+        (t!("Электропитание", "Power Options"), "powercfg.cpl"),
+        (t!("Просмотр событий", "Event Viewer"), "eventvwr.msc"),
+        (t!("Система", "System"), "ms-settings:about"),
+        (t!("Диспетчер устройств", "Device Manager"), "devmgmt.msc"),
+        (t!("Сетевые подключения", "Network Connections"), "ms-settings:network"),
+        (t!("Управление дисками", "Disk Management"), "diskmgmt.msc"),
+        (t!("Управление компьютером", "Computer Management"), "compmgmt.msc"),
+        (t!("Терминал", "Terminal"), "!term"),
+        (t!("Диспетчер задач", "Task Manager"), "taskmgr.exe"),
+        (t!("Параметры", "Settings"), "ms-settings:"),
+        (t!("Проводник", "File Explorer"), "shell:MyComputerFolder"),
+        (t!("Выполнить", "Run"), "!run"),
+        (t!("Рабочий стол", "Desktop"), "!desktop"),
     ];
-    let power = [("Блокировка", "Lock", "!lock"), ("Сон", "Sleep", "!sleep"), ("Перезагрузка", "Restart", "!restart"), ("Завершение работы", "Shut down", "!shutdown")];
+    let power = [(t!("Блокировка", "Lock"), "!lock"), (t!("Сон", "Sleep"), "!sleep"), (t!("Перезагрузка", "Restart"), "!restart"), (t!("Завершение работы", "Shut down"), "!shutdown")];
     let mut items = Vec::new();
     let mut targets = Vec::new();
-    for (i, (ru, en, to)) in tools.iter().chain(power.iter()).enumerate() {
-        let it = fly::MItem::new(t!(*ru, *en));
+    for (i, (label, to)) in tools.iter().chain(power.iter()).enumerate() {
+        let it = fly::MItem::new(*label);
         items.push(if i == tools.len() { it.sep() } else { it });
         targets.push(*to);
     }
