@@ -630,19 +630,6 @@ unsafe fn tip_font() -> HFONT {
 }
 
 unsafe extern "system" fn tip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP {
-        let mut r: RECT = zeroed();
-        GetClientRect(hwnd, &mut r);
-        let x = (lp as u16 as i16) as i32;
-        let y = ((lp >> 16) as u16 as i16) as i32;
-        let hit = SW.with_borrow(|(v, _)| switcher_hit(x, y, r.right, sc(SW_PAD), sc(SW_CELL), v.len()));
-        if let Some(index) = hit {
-            let changed = SW.with_borrow_mut(|(_, selected)| { let changed = *selected != index; *selected = index; changed });
-            if changed { update_switcher_preview(); InvalidateRect(hwnd, null(), 0); }
-            if msg == WM_LBUTTONUP { SWITCHING.store(false, Relaxed); alt_done(false); }
-        }
-        return 0;
-    }
     if msg != WM_PAINT {
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
@@ -842,6 +829,20 @@ fn switcher_hit(x: i32, y: i32, width: i32, pad: i32, height: i32, count: usize)
 }
 
 unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_MOUSEACTIVATE { return MA_NOACTIVATE as isize; }
+    if msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP {
+        let mut r: RECT = zeroed();
+        GetClientRect(hwnd, &mut r);
+        let x = (lp as u16 as i16) as i32;
+        let y = ((lp >> 16) as u16 as i16) as i32;
+        let hit = SW.with_borrow(|(v, _)| switcher_hit(x, y, r.right, sc(SW_PAD), sc(SW_CELL), v.len()));
+        if let Some(index) = hit {
+            let changed = SW.with_borrow_mut(|(_, selected)| { let changed = *selected != index; *selected = index; changed });
+            if changed { update_switcher_preview(); InvalidateRect(hwnd, null(), 0); }
+            if msg == WM_LBUTTONUP { SWITCHING.store(false, Relaxed); alt_done(false); }
+        }
+        return 0;
+    }
     if msg != WM_PAINT {
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
@@ -3830,6 +3831,32 @@ mod tests {
         assert!(super::squirrel_matches(&identity, r"c:\users\a\discord\app-1.0.9269\discord.exe"));
         assert!(!super::squirrel_matches(&identity, r"c:\users\a\discord-other\app-1\discord.exe"));
         assert!(!super::squirrel_matches(&identity, r"c:\users\a\discord\app-1\other.exe"));
+    }
+    #[test]
+    fn switcher_window_processes_pointer_events() {
+        let _guard = super::NATIVE_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            use super::*;
+            let instance = GetModuleHandleW(null());
+            let name = wide("winrust_switcher_pointer_test");
+            let class = WNDCLASSW { lpfnWndProc: Some(sw_proc), hInstance: instance, lpszClassName: name.as_ptr(), ..zeroed() };
+            assert_ne!(RegisterClassW(&class), 0);
+            let popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, name.as_ptr(), null(), WS_POPUP, 0, 0, 400, 200, null_mut(), null_mut(), instance, null());
+            assert!(!popup.is_null());
+            let previous = SWWND.replace(popup);
+            SW.set((vec![null_mut(), null_mut()], 0));
+            SWITCHING.store(true, Relaxed);
+            assert_eq!(SendMessageW(popup, WM_MOUSEACTIVATE, 0, 0), MA_NOACTIVATE as isize);
+            let xy = ((sc(SW_PAD + 5) as isize) << 16) | 250;
+            SendMessageW(popup, WM_MOUSEMOVE, 0, xy);
+            assert_eq!(SW.with_borrow(|(_, selected)| *selected), 1, "hover must reach the switcher window procedure");
+            SendMessageW(popup, WM_LBUTTONUP, 0, xy);
+            assert!(!SWITCHING.load(Relaxed));
+            assert!(SW.with_borrow(|(windows, _)| windows.is_empty()));
+            DestroyWindow(popup);
+            UnregisterClassW(name.as_ptr(), instance);
+            SWWND.set(previous);
+        }
     }
     #[test]
     fn switcher_pointer_respects_card_boundaries() {
