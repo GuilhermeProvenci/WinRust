@@ -12,6 +12,7 @@ pub use winrust_i18n_macros::{localized_format, localized_format_context};
 
 pub mod desktop;
 pub mod journal;
+pub mod launch;
 pub mod locales;
 pub mod mem;
 pub mod mft;

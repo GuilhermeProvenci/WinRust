@@ -79,7 +79,7 @@ pub(crate) fn bar_install() -> Result<(), String> {
         } else {
             run("reg", &["add", RUN_KEY, "/v", "reshell", "/t", "REG_SZ", "/d", &format!("\"{}\"", rsh.display()), "/f"])?; // fallback
         }
-        let _ = Command::new("explorer.exe").arg(&rsh).spawn();
+        let _ = winrust_common::launch::program(&rsh.to_string_lossy());
         run(dst.to_str().unwrap(), &["--restore"])?; // clean state in case a killed instance left the taskbar hidden
         // The bar runs elevated (a task with the highest run level starts it at logon without a UAC prompt): that lets it close
         // elevated windows and click elevated apps' tray icons. It starts everything else through explorer, i.e. unelevated.
@@ -90,7 +90,7 @@ pub(crate) fn bar_install() -> Result<(), String> {
         } else {
             WARN.lock().unwrap().push(pt!("задача topbar не создана: запуск через Run, без прав администратора", "topbar task was not created: it starts via Run, without administrator rights", "A tarefa da topbar não foi criada: ela inicia via Executar, sem direitos de administrador").into());
             run("reg", &["add", RUN_KEY, "/v", "topbar", "/t", "REG_SZ", "/d", &format!("\"{}\"", dst.display()), "/f"])?;
-            let _ = Command::new("explorer.exe").arg(&dst).spawn(); // normal user token, like rs-launcher
+            let _ = winrust_common::launch::program(&dst.to_string_lossy()); // normal user token, like rs-launcher
         }
         soft(pt!("профиль PowerShell не записан", "PowerShell profile was not written", "O perfil do PowerShell não foi gravado"), profile_install()); // a shell nicety, must not fail the bar install
         Ok(())
