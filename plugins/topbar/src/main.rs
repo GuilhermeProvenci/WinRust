@@ -560,7 +560,7 @@ unsafe fn sw_layout(sw: HWND) {
     let (mut rects, tw, th) = thumbs::grid(wins.len(), scr * 9 / 10 - 2 * pad, sch * 8 / 10 - 2 * pad, sc(thumbs::CARD_W), sc(thumbs::CARD_H), sc(thumbs::GAP));
     rects.iter_mut().for_each(|r| *r = RECT { left: r.left + pad, top: r.top + pad, right: r.right + pad, bottom: r.bottom + pad });
     let (w, h) = (tw + 2 * pad, th + 2 * pad);
-    SW_CARDS.with_borrow_mut(|(_, ids)| thumbs::unregister(ids));
+    SW_CARDS.with_borrow_mut(|(_, ids)| thumbs::unregister(sw, ids));
     SetWindowRgn(sw, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
     SetWindowPos(sw, HWND_TOPMOST, mon.left + (scr - w) / 2, mon.top + (sch - h) / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     let ids = thumbs::register(sw, &wins, &rects);
@@ -593,7 +593,7 @@ unsafe fn alt_close() {
 unsafe fn alt_done(cancel: bool) {
     ShowWindow(SWWND.get(), SW_HIDE);
     SW_CARDS.with_borrow_mut(|(r, ids)| {
-        thumbs::unregister(ids);
+        thumbs::unregister(SWWND.get(), ids);
         r.clear();
     });
     let (v, i) = SW.take();
