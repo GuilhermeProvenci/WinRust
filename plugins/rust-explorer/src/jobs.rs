@@ -182,7 +182,7 @@ fn copy_file(src: &Path, dst: &Path, size: u64, p: &Progress) -> std::io::Result
 /// Copies `from` into `to` (names that exist there get " (2)"); `then_delete` = a move across drives: the sources go away
 /// only when every file arrived.
 pub fn copy(h: isize, from: Vec<PathBuf>, to: PathBuf, then_delete: bool) -> bool {
-    let what = if then_delete { "Moving" } else { "Copying" }.to_string();
+    let what = if then_delete { super::tr("Moving", "Movendo") } else { super::tr("Copying", "Copiando") }.to_string();
     spawn(h, what, move |p| copy_now(&from, &to, then_delete, p))
 }
 
@@ -311,7 +311,7 @@ pub fn is_archive(p: &Path) -> bool {
 
 /// Unpacks each archive into a new folder named after it, next to it.
 pub fn extract(h: isize, archives: Vec<PathBuf>, dir: PathBuf) -> bool {
-    let what = format!("Extracting {}", archives.iter().map(|a| a.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "));
+    let what = format!("{} {}", super::tr("Extracting", "Extraindo"), archives.iter().map(|a| a.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "));
     spawn(h, what, move |p| {
         p.total_files.store(archives.len() as u64, Relaxed);
         for a in &archives {

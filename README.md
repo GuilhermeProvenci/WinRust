@@ -1,4 +1,4 @@
-﻿<p align="center"><img src="assets/logo.svg" alt="WinRust" width="160"></p>
+<p align="center"><img src="assets/logo.svg" alt="WinRust" width="160"></p>
 
 # WinRust
 
@@ -22,7 +22,7 @@ If UAC asks for **another administrator's** password, the per-user settings (sta
 
 **Update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
 
-The installer is in English. The **Русский** button in its corner (or "WinRust apps in Русский" in the bar's right-click menu) switches every WinRust program to Russian.
+The offline language ZIP contains the installer and separate Portuguese, Russian and Japanese data packs. Extract the whole ZIP, open the installer, choose **Languages**, select the packs and interface language, then apply. The Windows language is the default when available. Existing unselected packs are kept. The taskbar settings can switch among installed languages. Restart running components after updating a pack.
 
 ## Remove
 

@@ -20,9 +20,9 @@ pub fn size(bytes: u64) -> String {
 /// "73%, on battery" / "100%, plugged in" / "No battery".
 pub fn battery(on_ac: u8, flag: u8, percent: u8) -> String {
     if flag == 128 || flag == 255 || percent > 100 {
-        return t!("Нет батареи", "No battery").into();
+        return pt!("Нет батареи", "No battery", "Sem bateria").into();
     }
-    let src = if on_ac == 1 { t!("от сети", "plugged in") } else { t!("от батареи", "on battery") };
+    let src = if on_ac == 1 { pt!("от сети", "plugged in", "conectado") } else { pt!("от батареи", "on battery", "na bateria") };
     format!("{percent}%, {src}")
 }
 
@@ -136,9 +136,9 @@ pub fn timeout_text(t: Timeout) -> String {
 
 fn secs_text(s: u32) -> String {
     match s {
-        0 => t!("Никогда", "Never").into(),
-        s if s < 3600 => tf!("{} мин", "{} min", s / 60),
-        s => tf!("{} ч", "{} h", s / 3600),
+        0 => pt!("Никогда", "Never", "Nunca").into(),
+        s if s < 3600 => ptf!("{} мин", "{} min", "{} min", s / 60),
+        s => ptf!("{} ч", "{} h", "{}h", s / 3600),
     }
 }
 
