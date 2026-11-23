@@ -7,3 +7,5 @@ Extraia o ZIP inteiro e abra `WinRust.exe`. Em **Idiomas**, escolha os pacotes a
 Execute `python scripts/i18n-catalog.py audit --catalog locales/pt-BR.json --strict` para localizar textos ainda sem tradução e conferir os campos de formatação. A extração por padrões não cobre todas as expressões Rust: traduções, inclusive o catálogo japonês contribuído, exigem revisão humana.
 
 O catálogo russo usa chaves com contexto para distinguir traduções diferentes do mesmo texto em inglês. Após alterar textos russos de origem, execute `python scripts/extract-russian-catalog.py` e confira `python scripts/i18n-catalog.py audit --catalog locales/ru.json --strict`.
+
+O catálogo japonês inclui contribuição de [Ikko Eltociear Ashimine](https://github.com/GuilhermeProvenci/WinRust/pull/1), preservada a partir da colaboração no PR de tradução.

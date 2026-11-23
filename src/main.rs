@@ -12,6 +12,8 @@ mod cli;
 mod install;
 mod language_packs;
 mod selection;
+mod update_manifest;
+mod fork_update;
 mod ui;
 use {cli::*, install::*, selection::*, ui::*};
 use std::{
@@ -51,6 +53,7 @@ const DIM: u32 = rgb(142, 142, 147);
 const ACCENT: u32 = rgb(10, 132, 255);
 const GOOD: u32 = winrust_common::style::GOOD;
 const BAD: u32 = winrust_common::style::BAD;
+const FORK_VERSION: &str = include_str!("../fork-version.txt");
 const WM_DONE: u32 = WM_APP + 1;
 const WM_MOUSELEAVE: u32 = 0x02A3; // not exported by windows-sys under the enabled features
 
@@ -114,7 +117,7 @@ const PLUGINS: &[Plugin] = &[
     Plugin {
         name: RUST_EXPLORER,
         desc: Tr::new("Файловый менеджер на Rust вместо Проводника: папки и диски открываются в нём (Win+E тоже), рабочий стол рисует он сам. Обычный explorer.exe как оболочка ОТКЛЮЧАЕТСЯ. Нужен topbar.", "A Rust file manager for folders and drives. On multiple monitors the Windows desktop stays active, preserving wallpapers, desktop icons and secondary taskbars. Requires topbar.", "Um gerenciador de arquivos Rust para pastas e unidades. Em vários monitores, a área de trabalho do Windows permanece ativa, preservando papéis de parede, ícones da área de trabalho e barras de tarefas secundárias. Requer topbar."),
-        warn: Tr::new("ОБЫЧНЫЙ Explorer будет ОТКЛЮЧЁН: после установки панель задач, рабочий стол и окна папок дают topbar и rust-explorer. Сначала установите topbar, без него не будет панели. Ещё для экономии RAM отключаются службы PcaSvc, InventorySvc, lfsvc (геолокация), cbdhsvc (журнал буфера Win+V), DoSvc ставится вручную, службы svchost объединяются (полностью после перезагрузки); удаление плагина вернёт их. Если что-то пойдёт не так: Ctrl+Alt+Del, Диспетчер задач, Запустить новую задачу, explorer.exe; затем удалите плагин.", "On one monitor, the REGULAR Explorer may be disabled. On multiple monitors, the Windows desktop remains active and rust-explorer handles folders. Install topbar first. To save RAM the services PcaSvc, InventorySvc, lfsvc (geolocation) and cbdhsvc (Win+V clipboard history) are also disabled, DoSvc is set to manual, and svchost services are merged (fully after a reboot); uninstalling the plugin restores them. If something goes wrong: Ctrl+Alt+Del, Task Manager, Run new task, explorer.exe; then uninstall the plugin.", "Em um monitor, o Explorador REGULAR pode estar desabilitado. Em vários monitores, a área de trabalho do Windows permanece ativa e o Rust-Explorer lida com pastas. Instale a topbar primeiro. Para economizar RAM, os serviços PcaSvc, InventorySvc, lfsvc (geolocalização) e cbdhsvc (histórico da área de transferência Win + V) também são desabilitados, DoSvc é definido como manual e os serviços svchost são mesclados (totalmente após uma reinicialização); desinstalar o plugin os restaura. Se algo der errado: Ctrl+Alt+Del, Gerenciador de Tarefas, Executar nova tarefa, explorer.exe; em seguida, desinstale o plugin."),
+        warn: Tr::new("На одном мониторе Windows Explorer может быть заменён; на нескольких мониторах рабочий стол Windows сохраняется. Сначала установите topbar. При первой установке службы InventorySvc и lfsvc отключаются, DoSvc переключается в ручной режим, а параметр объединения svchost изменяется. При удалении сохранённые значения восстанавливаются. При проблемах: Ctrl+Alt+Del → Диспетчер задач → Запустить explorer.exe.", "On one monitor, Windows Explorer may be replaced; on multiple monitors the Windows desktop remains active. Install topbar first. On first installation, InventorySvc and lfsvc are disabled, DoSvc is set to manual, and the svchost grouping setting is changed. Saved values are restored on uninstall. If needed: Ctrl+Alt+Del → Task Manager → Run explorer.exe.", "Em um monitor, o Windows Explorer pode ser substituído; em vários, a área de trabalho do Windows permanece ativa. Instale a topbar primeiro. Na primeira instalação, InventorySvc e lfsvc são desativados, DoSvc passa a manual e a configuração de agrupamento do svchost é alterada. Os valores salvos são restaurados na desinstalação. Se necessário: Ctrl+Alt+Del → Gerenciador de Tarefas → Executar explorer.exe."),
         installed: rx_installed,
         actions: Some((rx_install, rx_uninstall)),
         settings: false,
@@ -175,6 +178,7 @@ const PLUGINS: &[Plugin] = &[
 ];
 
 static BUSY: AtomicBool = AtomicBool::new(false);
+static REMOVING: AtomicBool = AtomicBool::new(false);
 static JOB: AtomicUsize = AtomicUsize::new(usize::MAX); // what BUSY is working on: plugin index, or PLUGINS.len() = rollback
 static INSTALLED: [AtomicBool; PLUGINS.len()] = [const { AtomicBool::new(false) }; PLUGINS.len()];
 fn refresh() {
@@ -194,8 +198,14 @@ fn main() {
         std::process::exit(cli(&args));
     }
     refresh();
-    for i in ready() {
-        SELECTED[i].store(selected_by_default(PLUGINS[i].name, INSTALLED[i].load(Relaxed)), Relaxed);
+    let existing = ready().any(|i| INSTALLED[i].load(Relaxed));
+    for i in rows() {
+        let installed = INSTALLED[i].load(Relaxed);
+        let selected = if existing || !PLUGINS[i].bulk { installed } else { selected_by_default(PLUGINS[i].name, installed) };
+        SELECTED[i].store(selected, Relaxed);
+    }
+    if let (Some(e), Some(b)) = (PLUGINS.iter().position(|p| p.name == "rust-explorer"), PLUGINS.iter().position(|p| p.name == "topbar")) {
+        if SELECTED[e].load(Relaxed) { SELECTED[b].store(true, Relaxed); }
     }
     unsafe {
         let (mut token, mut input): (usize, GdiplusStartupInput) = (0, zeroed());
@@ -206,7 +216,7 @@ fn main() {
         let wc = WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hi, hCursor: LoadCursorW(null_mut(), IDC_ARROW), lpszClassName: cls.as_ptr(), ..zeroed() };
         RegisterClassW(&wc);
         let dc = GetDC(null_mut());
-        let s = GetDeviceCaps(dc, LOGPIXELSX as i32) as f32 / 96.0;
+        let s = window_scale(dc);
         ReleaseDC(null_mut(), dc);
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut r = RECT { left: 0, top: 0, right: (WIN_W * s) as i32, bottom: (WIN_H * s) as i32 };
@@ -215,6 +225,11 @@ fn main() {
         let hwnd = CreateWindowExW(0, cls.as_ptr(), title.as_ptr(), style | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, null_mut(), null_mut(), hi, null());
         DwmSetWindowAttribute(hwnd, 20, &1i32 as *const i32 as *const _, 4); // dark title bar
         DwmSetWindowAttribute(hwnd, 35, &BG as *const u32 as *const _, 4); // caption colour = window background (Win11; ignored on Win10)
+        let h = hwnd as isize;
+        thread::spawn(move || {
+            let _ = crate::fork_update::check();
+            PostMessageW(h as HWND, WM_DONE, 0, 0);
+        });
         let mut m: MSG = zeroed();
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
             TranslateMessage(&m);

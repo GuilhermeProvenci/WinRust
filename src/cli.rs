@@ -27,6 +27,9 @@ pub(crate) fn cli(args: &[String]) -> i32 {
     let words: Vec<&str> = args.iter().map(String::as_str).filter(|a| *a != "--yes").collect();
     let find = |n: &str| PLUGINS.iter().position(|p| p.name == n);
     let usage = "usage: plugin-launcher list | install <plugin>...|all --yes | update <plugin> | uninstall <plugin> | rollback --yes";
+    if (words.first() == Some(&"update") || (words.first() == Some(&"install") && yes)) && crate::fork_update::reject_older_installer().is_err() {
+        return { say("This installer is older than the installed fork, or the version record is unavailable."); 1 };
+    }
     let result = match words.as_slice() {
         ["list"] => {
             for p in PLUGINS {
@@ -69,6 +72,9 @@ pub(crate) fn cli(args: &[String]) -> i32 {
                     }
                 }
             }
+            if !failed && ready().any(|i| (PLUGINS[i].installed)()) {
+                if let Err(e) = crate::fork_update::mark_installed() { say(&format!("Version registration failed: {e}")); return 1; }
+            }
             return if failed { 1 } else { 0 };
         }
         ["update", n] => match find(n) {
@@ -86,7 +92,13 @@ pub(crate) fn cli(args: &[String]) -> i32 {
         _ => return { say(usage); 2 },
     };
     match result {
-        Ok(m) => { say(&m); 0 }
+        Ok(m) => {
+            say(&m);
+            if words.first() == Some(&"update") {
+                if let Err(e) = crate::fork_update::mark_installed() { say(&format!("Version registration failed: {e}")); return 1; }
+            }
+            0
+        }
         Err(e) => { say(&format!("error: {e}")); 1 }
     }
 }
