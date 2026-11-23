@@ -3809,9 +3809,22 @@ fn main() {
         if !monitors::secondary() {
         windows_sys::Win32::UI::Accessibility::SetWinEventHook(0x000B, 0x000B, null_mut(), Some(snap_proc), 0, 0, 0);
         thread::spawn(|| {
-            if !SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0).is_null() {
-                let mut m: MSG = zeroed();
-                while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {}
+            let mut hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0);
+            // Windows silently drops a low-level hook that once answers too slowly (busy boot), leaving Win+R, Start and
+            // Alt+Tab dead with no explorer to fall back on: set it again now and then. Callbacks run only inside
+            // GetMessageW on this thread, so swapping here never delivers a key twice.
+            SetTimer(null_mut(), 0, 30_000, None);
+            let mut m: MSG = zeroed();
+            while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
+                if m.message == WM_TIMER {
+                    let new = SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0);
+                    if !new.is_null() {
+                        if !hook.is_null() {
+                            UnhookWindowsHookEx(hook);
+                        }
+                        hook = new;
+                    }
+                }
             }
         }); }
         monitors::reconcile();
