@@ -123,11 +123,11 @@ pub fn scan(done: impl FnOnce() + Send + 'static) {
 
 fn pairing_text(code: i32) -> String {
     match DevicePairingResultStatus(code) {
-        DevicePairingResultStatus::Paired => t!("Устройство подключено", "Device paired").into(),
-        DevicePairingResultStatus::AlreadyPaired => t!("Уже сопряжено", "Already paired").into(),
-        DevicePairingResultStatus::AuthenticationFailure | DevicePairingResultStatus::AuthenticationNotAllowed => t!("Сопряжение отклонено устройством", "The device refused to pair").into(),
-        DevicePairingResultStatus::RequiredHandlerNotRegistered | DevicePairingResultStatus::RejectedByHandler => t!("Для этого устройства нужен ввод PIN: сопрягите его в параметрах Windows", "This device needs a PIN: pair it in Windows' own settings").into(),
-        _ => tf!("Не удалось сопрячь (код {})", "Could not pair (code {})", code),
+        DevicePairingResultStatus::Paired => pt!("Устройство подключено", "Device paired", "Dispositivo pareado").into(),
+        DevicePairingResultStatus::AlreadyPaired => pt!("Уже сопряжено", "Already paired", "Já pareado").into(),
+        DevicePairingResultStatus::AuthenticationFailure | DevicePairingResultStatus::AuthenticationNotAllowed => pt!("Сопряжение отклонено устройством", "The device refused to pair", "O dispositivo recusou-se a emparelhar").into(),
+        DevicePairingResultStatus::RequiredHandlerNotRegistered | DevicePairingResultStatus::RejectedByHandler => pt!("Для этого устройства нужен ввод PIN: сопрягите его в параметрах Windows", "This device needs a PIN: pair it in Windows' own settings", "Este dispositivo precisa de um PIN: emparelhe-o nas próprias configurações do Windows").into(),
+        _ => ptf!("Не удалось сопрячь (код {})", "Could not pair (code {})", "Não foi possível emparelhar (código {})", code),
     }
 }
 
@@ -142,7 +142,7 @@ pub fn pair(id: String, done: impl FnOnce() + Send + 'static) {
                 if let Some(a) = args.as_ref() {
                     if a.PairingKind().is_ok_and(|k| k == DevicePairingKinds::ConfirmPinMatch || k == DevicePairingKinds::DisplayPin) {
                         let pin = a.Pin().map(|p| p.to_string()).unwrap_or_default();
-                        with(|s| s.note = tf!("PIN: {}  (сравните с устройством)", "PIN: {}  (compare with the device)", pin));
+                        with(|s| s.note = ptf!("PIN: {}  (сравните с устройством)", "PIN: {}  (compare with the device)", "PIN: {} (compare com o dispositivo)", pin));
                     }
                     a.Accept()?;
                 }
@@ -152,7 +152,7 @@ pub fn pair(id: String, done: impl FnOnce() + Send + 'static) {
             let r = custom.PairAsync(kinds)?.join()?;
             Ok(pairing_text(r.Status()?.0))
         })()
-        .unwrap_or_else(|e| tf!("Не удалось сопрячь: {}", "Could not pair: {}", e.message()));
+        .unwrap_or_else(|e| ptf!("Не удалось сопрячь: {}", "Could not pair: {}", "Não foi possível emparelhar: {}", e.message()));
         with(|s| s.note = msg);
         BUSY.store(false, Relaxed);
         refresh(|| {});
@@ -166,9 +166,9 @@ pub fn unpair(id: String, done: impl FnOnce() + Send + 'static) {
         let msg = (|| -> windows::core::Result<String> {
             let info = DeviceInformation::CreateFromIdAsync(&HSTRING::from(&id))?.join()?;
             let r = info.Pairing()?.UnpairAsync()?.join()?;
-            Ok(if r.Status()? == DeviceUnpairingResultStatus::Unpaired { t!("Устройство удалено", "Device removed").into() } else { tf!("Не удалось удалить (код {})", "Could not remove (code {})", r.Status()?.0) })
+            Ok(if r.Status()? == DeviceUnpairingResultStatus::Unpaired { pt!("Устройство удалено", "Device removed", "Dispositivo removido").into() } else { ptf!("Не удалось удалить (код {})", "Could not remove (code {})", "Não foi possível remover (código {})", r.Status()?.0) })
         })()
-        .unwrap_or_else(|e| tf!("Не удалось удалить: {}", "Could not remove: {}", e.message()));
+        .unwrap_or_else(|e| ptf!("Не удалось удалить: {}", "Could not remove: {}", "Não foi possível remover: {}", e.message()));
         with(|s| s.note = msg);
         BUSY.store(false, Relaxed);
         refresh(|| {});

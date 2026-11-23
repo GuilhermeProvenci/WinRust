@@ -114,6 +114,12 @@ pub(crate) const ID_CANCEL: usize = 3;
 pub(crate) const ID_SWITCH: usize = 4;
 pub(crate) const ID_GEAR: usize = 5;
 pub(crate) const ID_LANG: usize = 6; // EN / RU switch
+pub(crate) const ID_LP_EN: usize = 8;
+pub(crate) const ID_LP_JA: usize = 11;
+pub(crate) const ID_PACK_PT: usize = 12;
+pub(crate) const ID_PACK_JA: usize = 14;
+pub(crate) const ID_PACK_APPLY: usize = 15;
+pub(crate) const ID_PACK_CLOSE: usize = 16;
 pub(crate) const ID_SHELL: usize = 7; // settings panel: replace Explorer with rust-explorer
 pub(crate) const ID_CHECK: usize = 100; // + plugin index: the row's checkbox
 pub(crate) const STARTING: usize = usize::MAX - 1; // JOB before install_all picks its first component
@@ -168,9 +174,21 @@ fn explorer_idx() -> Option<usize> {
     PLUGINS.iter().position(|p| p.name == crate::selection::RUST_EXPLORER)
 }
 
-/// The EN / RU switch in the top right corner of the header.
+/// The English / Portuguese switch in the top right corner of the header.
 pub(crate) fn lang_box(w: f32) -> Box4 {
     [w - M - 96.0, 18.0, w - M, 18.0 + 30.0]
+}
+
+fn locale_choice_box(w: f32, i: usize) -> Box4 {
+    let (d, _, _) = dialog_boxes(w);
+    let x = d[0] + 24.0 + (i % 2) as f32 * 238.0;
+    let y = d[1] + 92.0 + (i / 2) as f32 * 34.0;
+    [x, y, x + 226.0, y + 30.0]
+}
+fn pack_choice_box(w: f32, i: usize) -> Box4 {
+    let (d, _, _) = dialog_boxes(w);
+    let y = d[1] + 207.0 + i as f32 * 32.0;
+    [d[0] + 24.0, y, d[2] - 24.0, y + 29.0]
 }
 
 pub(crate) fn rollback_box(w: f32) -> Box4 {
@@ -180,7 +198,7 @@ pub(crate) fn rollback_box(w: f32) -> Box4 {
 
 /// Dialog panel and its (cancel, ok) buttons.
 pub(crate) fn dialog_boxes(w: f32) -> (Box4, Box4, Box4) {
-    let (dw, dh) = (528.0, 352.0);
+    let (dw, dh) = (528.0, 392.0);
     let (l, t) = ((w - dw) / 2.0, (WIN_H - dh) / 2.0);
     let (bt, r) = (t + dh - 24.0 - BTN_H, l + dw - 24.0);
     ([l, t, l + dw, t + dh], [r - BTN_W - 10.0 - 120.0, bt, r - BTN_W - 10.0, bt + BTN_H], [r - BTN_W, bt, r, bt + BTN_H])
@@ -235,8 +253,8 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
     ui.text("W", [logo[0], logo[1] - 2.0, logo[2], logo[3]], 32.0, 900, rgb(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     let tx = logo[2] + 18.0;
     ui.text("WinRust", [tx, 28.0, w - M, 64.0], 30.0, 700, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-    ui.text(&tf!("Оболочка Windows на Rust  \u{00B7}  установлено {n_inst} из {N_READY}", "A Windows shell in Rust  \u{00B7}  {n_inst} of {N_READY} installed"), [tx, 64.0, w - M, 88.0], 13.0, 400, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-    ui.text(t!("ВХОДИТ В СОСТАВ", "INCLUDED"), [M + 4.0, LIST_TOP - 26.0, w - M, LIST_TOP - 6.0], 11.0, 700, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    ui.text(&ptf!("Оболочка Windows на Rust  \u{00B7}  установлено {n_inst} из {N_READY}", "A Windows shell in Rust  \u{00B7}  {n_inst} of {N_READY} installed", "Uma interface do Windows em Rust  \u{00B7}  {n_inst} de {N_READY} instalados"), [tx, 64.0, w - M, 88.0], 13.0, 400, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    ui.text(pt!("ВХОДИТ В СОСТАВ", "INCLUDED", "INCLUÍDO"), [M + 4.0, LIST_TOP - 26.0, w - M, LIST_TOP - 6.0], 11.0, 700, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
     // component list
     ui.round([M, LIST_TOP, w - M, LIST_TOP + LIST_H], 12.0, PANEL, BORDER);
@@ -270,13 +288,13 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
         ui.text_in(p.glyph, tile, 16.0, 400, if lit { ACCENT } else { TEXT }, DT_CENTER | DT_VCENTER | DT_SINGLELINE, winrust_common::style::icon_face());
 
         let (pill, pc) = if working {
-            (if job == n { t!("Удаление…", "Removing…") } else { t!("Установка…", "Installing…") }, ACCENT)
+            (if job == n { pt!("Удаление…", "Removing…", "Removendo…") } else { pt!("Установка…", "Installing…", "Instalando…") }, ACCENT)
         } else if installed {
-            (t!("Установлен", "Installed"), GOOD)
+            (pt!("Установлен", "Installed", "Instalado"), GOOD)
         } else if queued {
-            (t!("В очереди", "Queued"), DIM)
+            (pt!("В очереди", "Queued", "Na fila"), DIM)
         } else {
-            (t!("Не установлен", "Not installed"), DIM)
+            (pt!("Не установлен", "Not installed", "Não instalado"), DIM)
         };
         let pr = r[2] - 14.0 - 32.0 - 10.0;
         let pw = ui.width(pill, 11.5, 600) + 18.0;
@@ -308,23 +326,23 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
             ui.shape([mb[0], mb[1], mb[0] + (mb[2] - mb[0]) * done, mb[3]], 12.0, argb(ACCENT, 255));
         }
         let label = if job == n {
-            t!("Удаление WinRust…", "Removing WinRust…").to_string()
+            pt!("Удаление WinRust…", "Removing WinRust…", "Removendo WinRust…").to_string()
         } else {
-            pos.map_or(t!("Подготовка…", "Preparing…").into(), |q| tf!("Устанавливается {}  ({} из {})", "Installing {}  ({} of {})", PLUGINS[job].name, q + 1, n_sel))
+            pos.map_or(pt!("Подготовка…", "Preparing…", "Preparando…").into(), |q| ptf!("Устанавливается {}  ({} из {})", "Installing {}  ({} of {})", "Instalando {} ({} de {})", PLUGINS[job].name, q + 1, n_sel))
         };
         ui.text(&label, mb, 15.5, 700, TEXT, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     } else {
         let all = n_sel_inst == n_sel && n_sel > 0;
         let label = if n_sel == 0 {
-            t!("Отметьте компоненты", "Tick the components").to_string()
+            pt!("Отметьте компоненты", "Tick the components", "Marque os componentes").to_string()
         } else if n_sel < N_READY {
-            if all { tf!("Обновить выбранное  ({n_sel})", "Update selected  ({n_sel})") } else { tf!("Установить выбранное  ({n_sel})", "Install selected  ({n_sel})") }
+            if all { ptf!("Обновить выбранное  ({n_sel})", "Update selected  ({n_sel})", "Atualização selecionada ({n_sel})") } else { ptf!("Установить выбранное  ({n_sel})", "Install selected  ({n_sel})", "Instalação selecionada ({n_sel})") }
         } else if all {
-            t!("Обновить WinRust", "Update WinRust").to_string()
+            pt!("Обновить WinRust", "Update WinRust", "Atualizar WinRust").to_string()
         } else if n_inst == 0 {
-            t!("Установить WinRust", "Install WinRust").into()
+            pt!("Установить WinRust", "Install WinRust", "Instale o WinRust").into()
         } else {
-            tf!("Доустановить и обновить WinRust  (новых: {})", "Install and update WinRust  ({} new)", N_READY - n_inst)
+            ptf!("Доустановить и обновить WinRust  (новых: {})", "Install and update WinRust  ({} new)", "Instale e atualize o WinRust ({} novo)", N_READY - n_inst)
         };
         let (fill, fg) = if all || n_sel == 0 { (PANEL, if n_sel == 0 { DIM } else { TEXT }) } else { (ACCENT, rgb(255, 255, 255)) };
         let fill = if hot(ID_MAIN) { lerp(fill, TEXT, if all { 0.07 } else { 0.14 }) } else { fill };
@@ -340,9 +358,9 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
     ui.shape([M, ft, w - M, ft + 1.0 / s], 0.0, argb(BORDER, 255));
     let (m, ok) = MSG.lock().unwrap().clone();
     let (m, dot, fg) = if busy {
-        (t!("Выполняется, не закрывайте окно…", "Working, do not close the window…").to_string(), ACCENT, DIM)
+        (pt!("Выполняется, не закрывайте окно…", "Working, do not close the window…", "Trabalhando, não feche a janela…").to_string(), ACCENT, DIM)
     } else if m.is_empty() {
-        (t!("Перед установкой создаётся точка восстановления.", "A restore point is created before installing.").into(), DIM, DIM)
+        (pt!("Перед установкой создаётся точка восстановления.", "A restore point is created before installing.", "Um ponto de restauração é criado antes da instalação.").into(), DIM, DIM)
     } else if ok {
         (m, GOOD, TEXT)
     } else {
@@ -353,9 +371,36 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
     let one_line = ui.width(&m, 12.5, 400) < rb[0] - 16.0 - M - 18.0;
     let tb = [M + 18.0, ft + if one_line { 0.0 } else { 12.0 }, rb[0] - 16.0, WIN_H - if one_line { 0.0 } else { 8.0 }];
     ui.text(&m, tb, 12.5, 400, fg, DT_LEFT | DT_END_ELLIPSIS | if one_line { DT_SINGLELINE | DT_VCENTER } else { DT_WORDBREAK });
-    button(&ui, rb, t!("Удалить всё", "Remove all"), if n_inst > 0 && !busy { 2 } else { 3 }, hot(ID_ROLLBACK));
+    button(&ui, rb, pt!("Удалить всё", "Remove all", "Remover tudo"), if n_inst > 0 && !busy { 2 } else { 3 }, hot(ID_ROLLBACK));
     // shows the language you would switch to; the other WinRust programs pick the choice up when they start
-    button(&ui, lang_box(w), if en!() { "Русский" } else { "English" }, 1, hot(ID_LANG));
+    button(&ui, lang_box(w), t!("Языки", "Languages"), 1, hot(ID_LANG));
+
+    if LANGUAGE_MENU.get() {
+        ui.shape([0.0, 0.0, w, WIN_H + 1.0], 0.0, argb(0, 160));
+        let (d, cancel, apply) = dialog_boxes(w);
+        ui.round(d, 14.0, lerp(PANEL, BG, 0.25), BORDER);
+        ui.text(t!("Языки WinRust", "WinRust languages"), [d[0]+24.0,d[1]+18.0,d[2]-24.0,d[1]+48.0], 17.0, 600, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        ui.text(t!("Язык интерфейса", "Display language"), [d[0]+24.0,d[1]+55.0,d[2]-24.0,d[1]+85.0], 12.0, 600, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        let names = ["English", "Русский", "Português (Brasil)", "日本語"];
+        for (i, name) in names.iter().enumerate() {
+            let b = locale_choice_box(w, i);
+            let id = ID_LP_EN + i;
+            let available = i < 1 || pack_available(i-1);
+            button(&ui, b, name, if !available {3} else if LANGUAGE_SELECTED.get()==i {0} else {1}, hot(id));
+        }
+        ui.text(t!("Языковые пакеты (из архива с языками)", "Optional language packs (from the languages ZIP)"), [d[0]+24.0,d[1]+174.0,d[2]-24.0,d[1]+202.0], 12.0, 600, DIM, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        for (i, (_, name)) in crate::language_packs::PACKS.iter().enumerate() {
+            let b = pack_choice_box(w, i);
+            let checked = PACK_SELECTED.get()[i];
+            let label = format!("{}  {}{}", if checked {"☑"} else {"☐"}, name, if pack_available(i) {""} else {t!(" (недоступен)", " (unavailable)")});
+            ui.text(&label, b, 13.0, 400, if pack_available(i) {TEXT} else {DIM}, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        }
+        let error = LANGUAGE_ERROR.with_borrow(|e| e.clone());
+        if !error.is_empty() { ui.text(&error, [d[0]+24.0,d[1]+306.0,d[2]-24.0,d[1]+328.0], 11.5, 400, BAD, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS); }
+        button(&ui, cancel, t!("Отмена", "Cancel"), 1, hot(ID_PACK_CLOSE));
+        button(&ui, apply, t!("Применить", "Apply"), 0, hot(ID_PACK_APPLY));
+    }
+
 
     // confirmation dialog over the dimmed window
     if let Some((title, text, ok_label, danger)) = dialog {
@@ -369,7 +414,7 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
         ui.text_in(if danger { "\u{E7BA}" } else { "\u{E946}" }, icon, 16.0, 400, accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE, winrust_common::style::icon_face());
         ui.text(&title, [icon[2] + 14.0, d[1] + 24.0, d[2] - 24.0, d[1] + 60.0], 17.0, 600, TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         ui.text(&text, [d[0] + 24.0, d[1] + 76.0, d[2] - 24.0, cancel[1] - 12.0], 12.5, 400, DIM, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
-        button(&ui, cancel, t!("Отмена", "Cancel"), 1, hot(ID_CANCEL));
+        button(&ui, cancel, pt!("Отмена", "Cancel", "Cancelar"), 1, hot(ID_CANCEL));
         let okfill = if hot(ID_OK) { lerp(accent, TEXT, 0.14) } else { accent };
         ui.round(okb, 8.0, okfill, okfill);
         ui.text(&ok_label, okb, 13.5, 600, rgb(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -384,12 +429,12 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
         let tint = lerp(PANEL, ACCENT, 0.18);
         ui.round(icon, 18.0, tint, tint);
         ui.text_in("\u{E713}", icon, 16.0, 400, ACCENT, DT_CENTER | DT_VCENTER | DT_SINGLELINE, winrust_common::style::icon_face());
-        ui.text(&tf!("Настройки {}", "{} settings", PLUGINS[i].name), [icon[2] + 14.0, d[1] + 24.0, d[2] - 24.0, d[1] + 60.0], 17.0, 600, TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        ui.text(&ptf!("Настройки {}", "{} settings", "Configurações {}", PLUGINS[i].name), [icon[2] + 14.0, d[1] + 24.0, d[2] - 24.0, d[1] + 60.0], 17.0, 600, TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         let row = [d[0] + 24.0, d[1] + 78.0, d[2] - 24.0, d[1] + 148.0];
         let hid = od_hidden();
         ui.round(row, 10.0, PANEL, BORDER);
-        ui.text(t!("Отключение OneDrive", "Disable OneDrive"), [row[0] + 16.0, row[1] + 10.0, row[2] - 80.0, row[1] + 32.0], 14.0, 600, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-        ui.text(t!("Значок OneDrive не показывается в топбаре (по умолчанию). Синхронизация продолжает работать.", "The OneDrive icon is not shown in the bar (default). Sync keeps working."), [row[0] + 16.0, row[1] + 32.0, row[2] - 80.0, row[3] - 6.0], 12.0, 400, DIM, DT_LEFT | DT_WORDBREAK);
+        ui.text(pt!("Отключение OneDrive", "Disable OneDrive", "Desabilitar OneDrive"), [row[0] + 16.0, row[1] + 10.0, row[2] - 80.0, row[1] + 32.0], 14.0, 600, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        ui.text(pt!("Значок OneDrive не показывается в топбаре (по умолчанию). Синхронизация продолжает работать.", "The OneDrive icon is not shown in the bar (default). Sync keeps working.", "O ícone do OneDrive não é mostrado na barra (padrão). A sincronização continua funcionando."), [row[0] + 16.0, row[1] + 32.0, row[2] - 80.0, row[3] - 6.0], 12.0, 400, DIM, DT_LEFT | DT_WORDBREAK);
         let sw = switch_box(w);
         let off = lerp(PANEL, TEXT, 0.25);
         let track = if hid { ACCENT } else { off };
@@ -399,14 +444,14 @@ pub(crate) unsafe fn paint(hwnd: HWND) {
         let row2 = [row[0], row[1] + 80.0, row[2], row[3] + 80.0];
         let on = explorer_idx().is_some_and(|e| SELECTED[e].load(Relaxed));
         ui.round(row2, 10.0, PANEL, BORDER);
-        ui.text(t!("Оболочка: rust-explorer", "Shell: rust-explorer"), [row2[0] + 16.0, row2[1] + 10.0, row2[2] - 80.0, row2[1] + 32.0], 14.0, 600, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-        ui.text(t!("Включено: заменить Проводник. Выключено: остаётся стандартный Проводник Windows.", "On: replace Explorer. Off: the standard Windows Explorer stays."), [row2[0] + 16.0, row2[1] + 32.0, row2[2] - 80.0, row2[3] - 6.0], 12.0, 400, DIM, DT_LEFT | DT_WORDBREAK);
+        ui.text(pt!("Оболочка: rust-explorer", "Shell: rust-explorer", "Shell: rust-explorer"), [row2[0] + 16.0, row2[1] + 10.0, row2[2] - 80.0, row2[1] + 32.0], 14.0, 600, TEXT, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        ui.text(pt!("Включено: заменить Проводник. Выключено: остаётся стандартный Проводник Windows.", "On: replace Explorer. Off: the standard Windows Explorer stays.", "Ativado: substitua o Explorer. Desligado: o Windows Explorer padrão permanece."), [row2[0] + 16.0, row2[1] + 32.0, row2[2] - 80.0, row2[3] - 6.0], 12.0, 400, DIM, DT_LEFT | DT_WORDBREAK);
         let sw2 = shell_switch_box(w);
         let track2 = if on { ACCENT } else { off };
         ui.round(sw2, 12.0, track2, track2);
         let kx2 = if on { sw2[2] - 12.0 } else { sw2[0] + 12.0 };
         ui.round([kx2 - 8.0, sw2[1] + 4.0, kx2 + 8.0, sw2[3] - 4.0], 8.0, TEXT, TEXT);
-        button(&ui, closeb, t!("Закрыть", "Close"), 1, hot(ID_CANCEL));
+        button(&ui, closeb, pt!("Закрыть", "Close", "Fechar"), 1, hot(ID_CANCEL));
     }
 
     GdipDeleteGraphics(g);
@@ -433,6 +478,20 @@ pub(crate) struct Dialog {
     act: Act,
 }
 thread_local! { pub(crate) static DIALOG: std::cell::RefCell<Option<Dialog>> = const { std::cell::RefCell::new(None) }; }
+thread_local! {
+    static LANGUAGE_MENU: Cell<bool> = const { Cell::new(false) };
+    static LANGUAGE_SELECTED: Cell<usize> = const { Cell::new(0) };
+    static PACK_SELECTED: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
+    static PACK_AVAILABLE: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
+    static LANGUAGE_ERROR: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+const LANGUAGES: [&str; 4] = ["en", "ru", "pt-BR", "ja"];
+fn probe_pack(i: usize) -> bool {
+    let Some(&(code, _)) = crate::language_packs::PACKS.get(i) else { return false };
+    crate::language_packs::source_dir().is_some_and(|d| crate::language_packs::valid_in(&d, code)) ||
+        crate::language_packs::installed_dir().is_some_and(|d| crate::language_packs::valid_in(&d, code))
+}
+fn pack_available(i: usize) -> bool { PACK_AVAILABLE.get().get(i).copied().unwrap_or(false) }
 
 /// Clickable thing under the cursor (ID_*). While a panel is up only its buttons count; while a job runs nothing does.
 pub(crate) unsafe fn hit(hwnd: HWND, lp: isize) -> Option<usize> {
@@ -443,6 +502,12 @@ pub(crate) unsafe fn hit(hwnd: HWND, lp: isize) -> Option<usize> {
     GetClientRect(hwnd, &mut rc);
     let w = rc.right as f32 / s;
     let inside = |b: Box4| x >= b[0] * s && x <= b[2] * s && y >= b[1] * s && y <= b[3] * s;
+    if LANGUAGE_MENU.get() {
+        let (_, cancel, apply) = dialog_boxes(w);
+        for i in 0..4 { if inside(locale_choice_box(w, i)) { return Some(ID_LP_EN + i); } }
+        for i in 0..3 { if inside(pack_choice_box(w, i)) { return Some(ID_PACK_PT + i); } }
+        return if inside(apply) { Some(ID_PACK_APPLY) } else if inside(cancel) { Some(ID_PACK_CLOSE) } else { None };
+    }
     if SETTINGS.get().is_some() {
         let (_, _, closeb) = dialog_boxes(w);
         return if inside(switch_box(w)) { Some(ID_SWITCH) } else if inside(shell_switch_box(w)) { Some(ID_SHELL) } else if inside(closeb) { Some(ID_CANCEL) } else { None };
@@ -479,7 +544,7 @@ pub(crate) fn start(hwnd: HWND, which: usize, job: impl FnOnce() -> Result<Strin
     thread::spawn(move || {
         *MSG.lock().unwrap() = match job() {
             Ok(m) => (m, true),
-            Err(e) => (tf!("Ошибка: {e}", "Error: {e}"), false),
+            Err(e) => (ptf!("Ошибка: {e}", "Error: {e}", "Erro: {e}"), false),
         };
         refresh();
         BUSY.store(false, Relaxed);
@@ -492,11 +557,15 @@ pub(crate) fn start(hwnd: HWND, which: usize, job: impl FnOnce() -> Result<Strin
 /// missing); the failures are listed at the end. `h` = window to repaint between steps.
 pub(crate) fn install_all(h: isize) -> Result<String, String> {
     let all = chosen().all(|i| (PLUGINS[i].installed)());
-    let (mut done, mut failed, mut warned) = (Vec::new(), Vec::new(), false);
+    let (mut done, mut failed, mut skipped, mut warned) = (Vec::new(), Vec::new(), Vec::new(), false);
     for i in chosen() {
         // installed ones are updated too: a newer installer must bring its fixes to them, not only add what is missing
         JOB.store(i, Relaxed);
         unsafe { InvalidateRect(h as HWND, null(), 0) };
+        if (PLUGINS[i].installed)() && component_current(PLUGINS[i].name) {
+            skipped.push(PLUGINS[i].name);
+            continue;
+        }
         if let Err(e) = install_plugin(i) {
             failed.push(format!("{}: {e}", PLUGINS[i].name));
             continue;
@@ -506,11 +575,13 @@ pub(crate) fn install_all(h: isize) -> Result<String, String> {
         refresh();
     }
     if !failed.is_empty() {
-        let ok = if done.is_empty() { String::new() } else { tf!(" Готово: {}.", " Done: {}.", done.join(", ")) };
+        let ok = if done.is_empty() { String::new() } else { ptf!(" Готово: {}.", " Done: {}.", " Feito: {}.", done.join(", ")) };
         return Err(format!("{}.{ok}", failed.join("; ")));
     }
-    let note = if warned { t!(" Есть предупреждения (см. %ProgramData%\\plugin-launcher\\install.log).", " There are warnings (see %ProgramData%\\plugin-launcher\\install.log).") } else { "" };
-    Ok(format!("WinRust {}: {}.{note}", if all { t!("обновлён", "updated") } else { t!("установлен", "installed") }, done.join(", ")))
+    let note = if warned { pt!(" Есть предупреждения (см. %ProgramData%\\plugin-launcher\\install.log).", " There are warnings (see %ProgramData%\\plugin-launcher\\install.log).", " Existem avisos (consulte %ProgramData%\\plugin-launcher\\install.log).") } else { "" };
+    let skipped_note = if skipped.is_empty() { String::new() } else { ptf!(" Уже актуальны: {}.", " Already up to date: {}.", " Já atualizados: {}.", skipped.join(", ")) };
+    if done.is_empty() { return Ok(format!("{}{}", pt!("Всё уже актуально.", "Everything selected is already up to date.", "Todos os componentes selecionados já estão atualizados."), note)); }
+    Ok(format!("WinRust {}: {}.{skipped_note}{note}", if all { pt!("обновлён", "updated", "atualizado") } else { pt!("установлен", "installed", "instalado") }, done.join(", ")))
 }
 
 pub(crate) unsafe fn ask(hwnd: HWND, d: Dialog) {
@@ -536,10 +607,48 @@ pub(crate) unsafe fn close_dialog(hwnd: HWND, run: bool) {
 }
 
 pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
+    if LANGUAGE_MENU.get() {
+        match id {
+            ID_PACK_CLOSE => LANGUAGE_MENU.set(false),
+            ID_LP_EN..=ID_LP_JA => {
+                let i = id - ID_LP_EN;
+                if i < 1 || pack_available(i - 1) {
+                    LANGUAGE_SELECTED.set(i);
+                    if i >= 1 { let mut selected = PACK_SELECTED.get(); selected[i-1] = true; PACK_SELECTED.set(selected); }
+                }
+            }
+            ID_PACK_PT..=ID_PACK_JA => {
+                let i = id - ID_PACK_PT;
+                if pack_available(i) { let mut selected = PACK_SELECTED.get(); selected[i] = !selected[i]; PACK_SELECTED.set(selected); }
+            }
+            ID_PACK_APPLY => {
+                let selected = PACK_SELECTED.get();
+                let language = LANGUAGES[LANGUAGE_SELECTED.get()];
+                LANGUAGE_MENU.set(false);
+                start(hwnd, STARTING, move || {
+                    let session = init()?;
+                    if session.other { return Err(t!("Используйте учётную запись пользователя сеанса.", "Use the signed-in user's administrator account for language settings.").into()); }
+                    let source = crate::language_packs::source_dir().ok_or(t!("Путь установщика недоступен", "Installer location unavailable"))?;
+                    let target = crate::language_packs::installed_dir().ok_or(t!("ProgramData недоступна", "ProgramData unavailable"))?;
+                    let codes: Vec<_> = crate::language_packs::PACKS.iter().enumerate().filter_map(|(i, (id, _))| selected[i].then_some(*id)).collect();
+                    crate::language_packs::install(&source, &target, &codes)?;
+                    if matches!(language, "ru" | "pt-BR" | "ja") && !crate::language_packs::valid_in(&target, language) {
+                        return Err(t!("Языковой пакет не установлен", "The selected language pack is not installed").into());
+                    }
+                    i18n::locales::retry_missing();
+                    i18n::set_language(language).map_err(|e| e.to_string())?;
+                    Ok(t!("Языки сохранены. Перезапустите приложения, чтобы обновить переводы.", "Languages saved. Restart running applications to refresh translations.").into())
+                });
+                return;
+            }
+            _ => {}
+        }
+        HOVER.set(None); InvalidateRect(hwnd, null(), 0); return;
+    }
     if SETTINGS.get().is_some() {
         if id == ID_SWITCH {
             if let Err(e) = set_od_hidden(!od_hidden()) {
-                *MSG.lock().unwrap() = (tf!("Ошибка: {e}", "Error: {e}"), false);
+                *MSG.lock().unwrap() = (ptf!("Ошибка: {e}", "Error: {e}", "Erro: {e}"), false);
             }
         } else if id == ID_SHELL {
             if let Some(e) = explorer_idx() {
@@ -565,7 +674,17 @@ pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
         }
         ID_MAIN if chosen().next().is_none() => {}
         ID_LANG => {
-            i18n::set_english(!i18n::english());
+            let current = i18n::language();
+            LANGUAGE_SELECTED.set(LANGUAGES.iter().position(|&x| x == current).unwrap_or(0));
+            let installed = crate::language_packs::installed_dir();
+            PACK_AVAILABLE.set(std::array::from_fn(probe_pack));
+            PACK_SELECTED.set(std::array::from_fn(|i| {
+                let id = crate::language_packs::PACKS[i].0;
+                (current == id || installed.as_ref().is_some_and(|d| crate::language_packs::valid_in(d, id))) && pack_available(i)
+            }));
+            LANGUAGE_ERROR.set(String::new());
+            LANGUAGE_MENU.set(true);
+
             HOVER.set(None);
             InvalidateRect(hwnd, null(), 0);
         }
@@ -575,37 +694,37 @@ pub(crate) unsafe fn click(hwnd: HWND, id: usize) {
             InvalidateRect(hwnd, null(), 0);
         }
         ID_ROLLBACK => ask(hwnd, Dialog {
-            title: t!("Удалить WinRust?", "Remove WinRust?").into(),
-            text: t!("Все компоненты будут удалены. Вернутся поиск Windows, стандартный диспетчер задач, панель задач и обычный Проводник.", "All components will be removed. Windows Search, the stock Task Manager, the taskbar and regular Explorer come back.").into(),
-            ok: t!("Удалить всё", "Remove all").into(),
+            title: pt!("Удалить WinRust?", "Remove WinRust?", "Remover WinRust?").into(),
+            text: pt!("Все компоненты будут удалены. Вернутся поиск Windows, стандартный диспетчер задач, панель задач и обычный Проводник.", "All components will be removed. Windows Search, the stock Task Manager, the taskbar and regular Explorer come back.", "Todos os componentes serão removidos. O Windows Search, o Gerenciador de Tarefas padrão, a barra de tarefas e o Explorer normal voltam.").into(),
+            ok: pt!("Удалить всё", "Remove all", "Remover tudo").into(),
             danger: true,
             act: Act::Rollback,
         }),
         ID_MAIN if chosen().all(|i| INSTALLED[i].load(Relaxed)) => ask(hwnd, Dialog {
-            title: t!("Обновить WinRust?", "Update WinRust?").into(),
-            text: t!("Выбранные компоненты будут переустановлены из этой версии установщика. Настройки сохранятся.", "The selected components will be reinstalled from this version of the installer. Settings are kept.").into(),
-            ok: t!("Обновить", "Update").into(),
+            title: pt!("Обновить WinRust?", "Update WinRust?", "Atualizar WinRust?").into(),
+            text: pt!("Выбранные компоненты будут переустановлены из этой версии установщика. Настройки сохранятся.", "Selected components are compared with this installer. Only files that differ are updated; settings are kept.", "Os componentes selecionados serão comparados com este instalador. Somente os arquivos diferentes serão atualizados; as configurações serão mantidas.").into(),
+            ok: pt!("Обновить", "Update", "Atualizar").into(),
             danger: false,
             act: Act::InstallAll,
         }),
         ID_MAIN if chosen().count() < N_READY => {
-            let mut text = tf!("Будет установлено или обновлено: {}.\n\nКомпоненты меняют систему (подробности в описании каждого). Создаётся точка восстановления, «Удалить всё» вернёт систему.", "To be installed or updated: {}.\n\nThe components change the system (see each one's description). A restore point is created, 'Remove all' restores the system.", chosen().map(|i| PLUGINS[i].name).collect::<Vec<_>>().join(", "));
+            let mut text = ptf!("Будет установлено или обновлено: {}.\n\nКомпоненты меняют систему (подробности в описании каждого). Создаётся точка восстановления, «Удалить всё» вернёт систему.", "To be installed or updated: {}.\n\nThe components change the system (see each one's description). A restore point is created, 'Remove all' restores the system.", "Para ser instalado ou atualizado: {}.\n\nOs componentes alteram o sistema (veja a descrição de cada um). Um ponto de restauração é criado, 'Remover tudo' restaura o sistema.", chosen().map(|i| PLUGINS[i].name).collect::<Vec<_>>().join(", "));
             if let Some(i) = chosen().find(|&i| PLUGINS[i].name == RUST_EXPLORER && !INSTALLED[i].load(Relaxed)) {
                 text.push_str("\n\n");
                 text.push_str(PLUGINS[i].warn.get());
             }
             ask(hwnd, Dialog {
-                title: t!("Установить выбранное?", "Install the selected?").into(),
+                title: pt!("Установить выбранное?", "Install the selected?", "Instalar o selecionado?").into(),
                 text,
-                ok: t!("Установить", "Install").into(),
+                ok: pt!("Установить", "Install", "Instalar").into(),
                 danger: false,
                 act: Act::InstallAll,
             });
         },
         ID_MAIN => ask(hwnd, Dialog {
-            title: t!("Установить WinRust?", "Install WinRust?").into(),
-            text: t!("Компоненты Windows будут заменены:\n\u{2022} поиск Windows отключается, вместо него rust-search (Alt+Space);\n\u{2022} диспетчер задач заменяется на rtaskmgr;\n\u{2022} панель задач заменяется на topbar (внизу экрана);\n\u{2022} Проводник как оболочка отключается: папки и рабочий стол открывает rust-explorer, отключаются службы телеметрии.\n\nСоздаётся точка восстановления, «Удалить всё» вернёт систему. Если экран останется пустым: Ctrl+Alt+Del \u{2192} Диспетчер задач \u{2192} Запустить explorer.exe.", "Windows components will be replaced:\n\u{2022} Windows Search is disabled, rust-search (Alt+Space) takes its place;\n\u{2022} Task Manager is replaced by rtaskmgr;\n\u{2022} the taskbar is replaced by topbar (at the bottom of the screen);\n\u{2022} Explorer as the shell is disabled: rust-explorer opens folders and the desktop, telemetry services are disabled.\n\nA restore point is created, 'Remove all' restores the system. If the screen stays empty: Ctrl+Alt+Del \u{2192} Task Manager \u{2192} Run explorer.exe.").into(),
-            ok: t!("Установить", "Install").into(),
+            title: pt!("Установить WinRust?", "Install WinRust?", "Instalar WinRust?").into(),
+            text: pt!("Компоненты Windows будут заменены:\n\u{2022} поиск Windows отключается, вместо него rust-search (Alt+Space);\n\u{2022} диспетчер задач заменяется на rtaskmgr;\n\u{2022} панель задач заменяется на topbar (внизу экрана);\n\u{2022} Проводник как оболочка отключается: папки и рабочий стол открывает rust-explorer, отключаются службы телеметрии.\n\nСоздаётся точка восстановления, «Удалить всё» вернёт систему. Если экран останется пустым: Ctrl+Alt+Del \u{2192} Диспетчер задач \u{2192} Запустить explorer.exe.", "Windows components will be replaced:\n\u{2022} Windows Search is disabled, rust-search (Alt+Space) takes its place;\n\u{2022} Task Manager is replaced by rtaskmgr;\n\u{2022} the taskbar is replaced by topbar (at the bottom of the screen);\n\u{2022} Explorer as the shell is disabled: rust-explorer opens folders and the desktop, telemetry services are disabled.\n\nA restore point is created, 'Remove all' restores the system. If the screen stays empty: Ctrl+Alt+Del \u{2192} Task Manager \u{2192} Run explorer.exe.", "Os componentes do Windows serão alterados:\n• o Windows Search será desativado e o rust-search ocupará seu lugar (Alt+Space);\n• o Gerenciador de Tarefas será substituído pelo rtaskmgr;\n• a barra de tarefas será substituída pela topbar;\n• em um monitor, o rust-explorer poderá substituir a área de trabalho. Em vários monitores, a área de trabalho do Windows será mantida.\n\nO instalador tenta criar um ponto de restauração; confira o resultado. A opção Remover tudo tenta reverter as alterações. Se a tela ficar vazia: Ctrl+Alt+Del → Gerenciador de Tarefas → Executar nova tarefa → explorer.exe.").into(),
+            ok: pt!("Установить", "Install", "Instalar").into(),
             danger: false,
             act: Act::InstallAll,
         }),
@@ -638,6 +757,10 @@ pub(crate) unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: 
             if let Some(i) = hit(hwnd, lp) {
                 click(hwnd, i);
             }
+        }
+        WM_KEYDOWN if LANGUAGE_MENU.get() && wp as u16 == VK_ESCAPE => {
+            LANGUAGE_MENU.set(false);
+            InvalidateRect(hwnd, null(), 0);
         }
         WM_KEYDOWN if SETTINGS.get().is_some() && wp as u16 == VK_ESCAPE => {
             SETTINGS.set(None);

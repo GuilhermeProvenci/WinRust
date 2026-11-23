@@ -2,11 +2,15 @@
 use crate::*;
 use windows_sys::Win32::System::Registry::{
     HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_DWORD, RRF_RT_REG_DWORD,
-    RegCloseKey, RegFlushKey, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
+    RegCloseKey, RegDeleteValueW, RegFlushKey, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
 };
 
 mod dword_snapshot;
+mod service_control;
+mod service_state;
 use dword_snapshot::{Dword, backup_and_set, restore};
+use service_control::{change_start, current_state, ensure_state, is_stopped};
+use service_state::{ServiceState, restore_start_and_state};
 
 pub(crate) fn rx_dir() -> PathBuf {
     program_files().join("rust-explorer")
@@ -20,6 +24,16 @@ pub(crate) fn rx_dir() -> PathBuf {
 // Uninstall puts everything back and starts Explorer again. rs-shell itself hands the session back to Explorer if topbar dies.
 pub(crate) const RX_STATE: &str = r"HKLM\SOFTWARE\plugin-launcher\rust-explorer";
 pub(crate) const WINLOGON_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
+const AUTO_RESTART_SHELL: dword_snapshot::OptionalDwordBackup<'static> = dword_snapshot::OptionalDwordBackup {
+    target: (WINLOGON_KEY, "AutoRestartShell"),
+    saved: (RX_STATE, "AutoRestartShell"),
+    absent: (RX_STATE, "AutoRestartShellAbsent"),
+};
+const MISSING_AUTO_RESTART_BACKUP: Tr = Tr::new(
+    "нет копии AutoRestartShell: значение оставлено как есть",
+    "no AutoRestartShell backup: the value was left in place",
+    "não há backup de AutoRestartShell: o valor foi mantido"
+);
 pub(crate) const RX_SWITCH: &str = r"HKCU\Software\rs-shell";
 pub(crate) const RX_FOLDERS: [&str; 3] = [r"HKCU\Software\Classes\Directory\shell\open", r"HKCU\Software\Classes\Folder\shell\open", r"HKCU\Software\Classes\Drive\shell\open"];
 
@@ -27,12 +41,6 @@ pub(crate) const RX_FOLDERS: [&str; 3] = [r"HKCU\Software\Classes\Directory\shel
 const RX_SVCS: [(&str, u32); 5] = [("PcaSvc", 4), ("InventorySvc", 4), ("lfsvc", 4), ("cbdhsvc", 4), ("DoSvc", 3)];
 const SPLIT_KEY: &str = r"HKLM\SYSTEM\CurrentControlSet\Control";
 const SPLIT_VALUE: &str = "SvcHostSplitThresholdInKB";
-
-fn trim_settings() -> impl Iterator<Item = (&'static str, String, &'static str, u32)> {
-    RX_SVCS.into_iter()
-        .map(|(service, start)| (service, svc_key(service), "Start", start))
-        .chain(std::iter::once((SPLIT_VALUE, SPLIT_KEY.into(), SPLIT_VALUE, 0x4000000)))
-}
 
 fn trim_subkey(key: &str) -> Vec<u16> {
     wide(key.strip_prefix(r"HKLM\").expect("service settings live under HKLM"))
@@ -81,26 +89,82 @@ fn trim_write((key, name): Dword<'_>, value: u32) -> Result<(), String> {
         return Err(trim_registry_error(key, name, code));
     }
     if trim_read((key, name))? != Some(value) {
-        return Err(tf!("{key}: не удалось подтвердить запись {name}", "{key}: could not verify the write to {name}"));
+        return Err(ptf!("{key}: не удалось подтвердить запись {name}", "{key}: could not verify the write to {name}", "{key}: não foi possível verificar a gravação em {name}"));
     }
     Ok(())
 }
 
-fn apply_service_trim() {
-    for (backup, key, value, new) in trim_settings() {
-        let result = backup_and_set((&key, value), (RX_STATE, backup), new, trim_read, trim_write);
-        if matches!(&result, Ok(true)) && value == "Start" && new == 4 {
-            let _ = run("sc.exe", &["stop", backup]);
-        }
-        soft(backup, result.map(|_| ()));
+fn saved_service_state(name: &str) -> Result<Option<ServiceState>, String> {
+    let Some(value) = trim_read((RX_STATE, &format!("{name}State")))? else { return Ok(None) };
+    ServiceState::from_status(value).map(Some).ok_or_else(|| tf!("{name}: неверное сохранённое состояние {value}",
+        "{name}: invalid saved service state {value}"))
+}
+
+fn write_service_start(name: &str, start: u32) -> Result<(), String> {
+    change_start(name, start)?;
+    if trim_read((&svc_key(name), "Start"))? != Some(start) {
+        return Err(tf!("{name}: не удалось подтвердить тип запуска", "{name}: could not verify the startup mode"));
     }
+    Ok(())
+}
+
+fn apply_service_setting(name: &str, start: u32) -> Result<(), String> {
+    let key = svc_key(name);
+    let changed = backup_and_set((&key, "Start"), (RX_STATE, name), start, trim_read, |address, value| {
+        if address.0 == RX_STATE {
+            return trim_write(address, value);
+        }
+        if saved_service_state(name)?.is_none() {
+            let original = current_state(name)?;
+            trim_write((RX_STATE, &format!("{name}State")), original as u32)?;
+        }
+        write_service_start(name, value)
+    })?;
+    if changed && start == 4 {
+        ensure_state(name, ServiceState::Stopped)?;
+    }
+    Ok(())
+}
+
+fn restore_service_setting(name: &str) -> Result<bool, String> {
+    let Some(start) = trim_read((RX_STATE, name))? else { return Ok(false) };
+    let key = svc_key(name);
+    let Some(state) = saved_service_state(name)? else {
+        return restore((&key, "Start"), (RX_STATE, name), trim_read, trim_write);
+    };
+    let needs_temporary_enable = || {
+        if trim_read((&key, "Start"))? == Some(4) {
+            return is_stopped(name);
+        }
+        Ok(false)
+    };
+    restore_start_and_state(start, state, needs_temporary_enable, |start| {
+        if trim_read((&key, "Start"))? != Some(start) {
+            write_service_start(name, start)?;
+        }
+        Ok(())
+    }, |state| ensure_state(name, state))?;
+    Ok(true)
+}
+
+fn apply_service_trim() {
+    // Keep clipboard history and the compatibility assistant available;
+    // RX_SVCS still contains both so old backups can be restored on uninstall.
+    for (name, start) in RX_SVCS {
+        if matches!(name, "PcaSvc" | "cbdhsvc") { continue; }
+        soft(name, apply_service_setting(name, start));
+    }
+    soft(SPLIT_VALUE, backup_and_set((SPLIT_KEY, SPLIT_VALUE), (RX_STATE, SPLIT_VALUE),
+        0x4000000, trim_read, trim_write).map(|_| ()));
 }
 
 fn restore_service_trim() -> Result<(), String> {
     let mut restored = false;
     let mut errors = Vec::new();
-    for (backup, key, value, _) in trim_settings() {
-        match restore((&key, value), (RX_STATE, backup), trim_read, trim_write) {
+    for result in RX_SVCS.into_iter().map(|(name, _)| restore_service_setting(name))
+        .chain(std::iter::once_with(|| restore((SPLIT_KEY, SPLIT_VALUE), (RX_STATE, SPLIT_VALUE), trim_read, trim_write)))
+    {
+        match result {
             Ok(saved) => restored |= saved,
             Err(e) => errors.push(e),
         }
@@ -109,30 +173,175 @@ fn restore_service_trim() -> Result<(), String> {
         return Err(errors.join("; "));
     }
     if !restored && rx_dir().join("rust-explorer.exe").is_file() {
-        WARN.lock().unwrap().push(t!(
-            "исходные настройки служб не сохранены; текущие значения оставлены как есть",
-            "no service settings were backed up; the current values were left in place"
+        WARN.lock().unwrap().push(pt!("исходные настройки служб не сохранены; текущие значения оставлены как есть", "no service settings were backed up; the current values were left in place", "nenhuma configuração de serviço foi armazenada em backup; os valores atuais foram mantidos"
         ).into());
     }
     Ok(())
 }
+
+mod folder_backup;
 
 /// In our Program Files folder (admin-only): a .reg a user could plant would be imported by the elevated uninstall.
 pub(crate) fn rx_folders_bak(i: usize) -> PathBuf {
     rx_dir().join(format!("folders-{i}.reg"))
 }
 
+fn folder_subkey(sid: &str, verb: &str) -> String {
+    format!(r"{sid}\{}", verb.strip_prefix("HKCU\\").expect("per-user folder binding"))
+}
+
+fn folder_verb_exists(sid: &str, verb: &str) -> Result<bool, String> {
+    use windows_sys::Win32::System::Registry::HKEY_USERS;
+    let subkey = folder_subkey(sid, verb);
+    let mut handle = null_mut();
+    let code = unsafe { RegOpenKeyExW(HKEY_USERS, wide(&subkey).as_ptr(), 0, KEY_QUERY_VALUE, &mut handle) };
+    match code {
+        ERROR_SUCCESS => {
+            unsafe { RegCloseKey(handle) };
+            Ok(true)
+        }
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => Ok(false),
+        _ => Err(format!(r"HKU\{subkey}: {}", std::io::Error::from_raw_os_error(code as i32))),
+    }
+}
+
+fn our_folder_binding(sid: &str, verb: &str) -> Result<bool, String> {
+    use windows_sys::Win32::System::Registry::{HKEY_USERS, RRF_RT_REG_SZ};
+    let subkey = format!(r"{}\command", folder_subkey(sid, verb));
+    let executable = rx_dir().join("rust-explorer.exe");
+    // Read the whole command, up to the Windows process command-line limit (including NUL).
+    let mut actual = vec![0u16; 32_767];
+    let mut bytes = (actual.len() * size_of::<u16>()) as u32;
+    let code = unsafe {
+        RegGetValueW(HKEY_USERS, wide(&subkey).as_ptr(), null(), RRF_RT_REG_SZ, null_mut(),
+            actual.as_mut_ptr().cast(), &mut bytes)
+    };
+    let key = format!(r"HKU\{subkey}");
+    match code {
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_UNSUPPORTED_TYPE => return Ok(false),
+        ERROR_SUCCESS => {}
+        _ => return Err(trim_registry_error(&key, "(Default)", code)),
+    }
+    let count = bytes as usize / size_of::<u16>();
+    if !bytes.is_multiple_of(size_of::<u16>() as u32) || count == 0 || count > actual.len() || actual[count - 1] != 0 {
+        return Err(trim_registry_error(&key, "(Default)", ERROR_INVALID_DATA));
+    }
+    let command = String::from_utf16(&actual[..count - 1]).map_err(|e| format!("{key}: {e}"))?;
+    Ok(folder_backup::uses_executable(&command, &executable.to_string_lossy()))
+}
+
+fn clear_folder_binding(sid: &str, verb: &str) -> Result<(), String> {
+    if !folder_verb_exists(sid, verb)? {
+        return Ok(());
+    }
+    let key = i18n::reg::for_user(verb, sid);
+    run("reg", &["delete", &key, "/f"])?;
+    if folder_verb_exists(sid, verb)? {
+        return Err(tf!("{key}: не удалось удалить текущую привязку", "{key}: could not remove the current binding"));
+    }
+    Ok(())
+}
+
+fn staged_folder_backup(backup: &Path) -> Result<PathBuf, String> {
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_nanos();
+    Ok(backup.with_extension(format!("stage-{}-{timestamp}.reg", std::process::id())))
+}
+
+fn export_folder_binding(verb: &str, backup: &Path) -> Result<(), String> {
+    let staging = staged_folder_backup(backup)?;
+    let result = (|| {
+        run("reg", &["export", verb, &staging.display().to_string(), "/y"])?;
+        fs::OpenOptions::new().write(true).open(&staging)
+            .and_then(|file| file.sync_all()).map_err(|e| e.to_string())?;
+        // Publish a complete export and never overwrite the first copy.
+        match fs::hard_link(&staging, backup) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    })();
+    let _ = fs::remove_file(&staging);
+    result.map_err(|e| format!("{}: {e}", backup.display()))
+}
+
+fn restore_folder_binding(sid: &str, verb: &str, backup: &Path) -> Result<(), String> {
+    let source = match fs::read(backup) {
+        Ok(source) => source,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Older installs had no export when the verb originally did not exist.
+            // With no snapshot, only remove a binding that still points to our executable.
+            return if our_folder_binding(sid, verb)? { clear_folder_binding(sid, verb) } else { Ok(()) };
+        }
+        Err(e) => return Err(format!("{}: {e}", backup.display())),
+    };
+    let staging = staged_folder_backup(backup)?;
+    let result = folder_backup::restore_export(
+        &source,
+        sid,
+        verb.strip_prefix("HKCU\\").expect("per-user folder binding"),
+        |data| {
+            let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&staging).map_err(|e| e.to_string())?;
+            f.write_all(&data).map_err(|e| e.to_string())
+        },
+        || clear_folder_binding(sid, verb),
+        |()| {
+            run("reg", &["import", &staging.display().to_string()])?;
+            if !folder_verb_exists(sid, verb)? {
+                return Err(tf!("{verb}: привязка не найдена после импорта", "{verb}: binding missing after import"));
+            }
+            Ok(())
+        },
+    );
+    let _ = fs::remove_file(&staging);
+    result.map_err(|e| format!("{}: {e}", backup.display()))
+}
+
+fn restore_folder_bindings() -> Result<(), String> {
+    let sid = &init()?.sid;
+    let errors: Vec<_> = RX_FOLDERS.iter().enumerate()
+        .filter_map(|(i, verb)| restore_folder_binding(sid, verb, &rx_folders_bak(i)).err()).collect();
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+}
+
 pub(crate) fn rx_lnk() -> PathBuf {
     program_data().join(r"plugin-launcher\rs-overlay.lnk")
 }
 
+fn remove_dword((key, name): Dword<'_>) -> Result<(), String> {
+    let subkey = trim_subkey(key);
+    let value_name = wide(name);
+    let mut handle = null_mut();
+    let code = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey.as_ptr(), 0, KEY_SET_VALUE, &mut handle) };
+    match code {
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => return Ok(()),
+        ERROR_SUCCESS => {}
+        _ => return Err(trim_registry_error(key, name, code)),
+    }
+    let code = unsafe { RegDeleteValueW(handle, value_name.as_ptr()) };
+    unsafe { RegCloseKey(handle) };
+    if !matches!(code, ERROR_SUCCESS | ERROR_FILE_NOT_FOUND) {
+        return Err(trim_registry_error(key, name, code));
+    }
+    if trim_read((key, name))?.is_some() {
+        return Err(tf!("{key}: не удалось подтвердить удаление {name}", "{key}: could not verify the deletion of {name}"));
+    }
+    Ok(())
+}
+
+pub(crate) fn rx_installed() -> bool {
+    // An interrupted or damaged installation can still have registry changes to undo.
+    rx_dir().join("rust-explorer.exe").is_file()
+        || !matches!(AUTO_RESTART_SHELL.load(trim_read), Ok(None))
+}
+
 pub(crate) fn rx_install() -> Result<(), String> {
     if !bar_dir().join("topbar.exe").is_file() {
-        return Err(t!("сначала установите topbar: без него после отключения Explorer не будет панели", "install topbar first: without it there will be no bar after Explorer is disabled").into());
+        return Err(pt!("сначала установите topbar: без него после отключения Explorer не будет панели", "install topbar first: without it there will be no bar after Explorer is disabled", "instale a topbar primeiro: sem ela não haverá barra depois que o Explorer for desativado").into());
     }
     // An older installation may already have applied the tweaks without saving the originals.
-    let fresh = !rx_dir().join("rust-explorer.exe").is_file()
-        && trim_read((RX_STATE, "AutoRestartShell"))?.is_none();
+    let has_snapshot = AUTO_RESTART_SHELL.load(trim_read)?.is_some();
+    let first_setup = !rx_dir().join("rust-explorer.exe").is_file() && !has_snapshot;
     with_payload(&["rust-explorer.exe", "rs-shell.exe"], |d| {
         for n in ["rs-shell.exe", "rust-explorer.exe"] {
             let _ = run("taskkill", &["/f", "/im", n]); // an update: a running exe cannot be overwritten
@@ -141,22 +350,26 @@ pub(crate) fn rx_install() -> Result<(), String> {
         let (fm, sh) = (rx_dir().join("rust-explorer.exe"), rx_dir().join("rs-shell.exe"));
         put(&d.join("rust-explorer.exe"), &fm)?;
         put(&d.join("rs-shell.exe"), &sh)?;
-        // what Windows had, saved once (an update must not overwrite it with our own 0)
-        if reg_dword(RX_STATE, "AutoRestartShell").is_none() {
-            let v = reg_dword(WINLOGON_KEY, "AutoRestartShell").unwrap_or(1);
-            run("reg", &["add", RX_STATE, "/v", "AutoRestartShell", "/t", "REG_DWORD", "/d", &v.to_string(), "/f"])?;
-        }
         // folders and drives opened by other programs, the desktop, Win+R: rust-explorer. DelegateExecute is emptied on purpose:
         // while it is set, Windows ignores the command and uses Explorer's built-in handler.
         // Another file manager's verbs (Directory Opus, Total Commander) are exported first, once, and imported back on uninstall.
+        let sid = &init()?.sid;
         for (i, k) in RX_FOLDERS.iter().enumerate() {
-            let (bak, ours) = (rx_folders_bak(i), out("reg", &["query", &format!(r"{k}\command"), "/ve"]).is_ok_and(|c| c.to_lowercase().contains("rust-explorer")));
-            if !bak.is_file() && !ours && run("reg", &["query", k]).is_ok() {
-                run("reg", &["export", k, &bak.display().to_string(), "/y"])?;
+            let bak = rx_folders_bak(i);
+            if !bak.try_exists().map_err(|e| format!("{}: {e}", bak.display()))?
+                && folder_verb_exists(sid, k)? && !our_folder_binding(sid, k)?
+            {
+                export_folder_binding(&i18n::reg::for_user(k, sid), &bak)?;
             }
         }
+        // Save the baseline after staging the files, immediately before the first shell change.
+        if first_setup {
+            run("reg", &["add", RX_STATE, "/f"])?;
+            AUTO_RESTART_SHELL.capture(trim_read, trim_write)?;
+        }
         for k in RX_FOLDERS {
-            let c = format!(r"{k}\command");
+            let key = i18n::reg::for_user(k, sid);
+            let c = format!(r"{key}\command");
             run("reg", &["add", &c, "/ve", "/t", "REG_SZ", "/d", &format!("\"{}\" \"%1\"", fm.display()), "/f"])?;
             run("reg", &["add", &c, "/v", "DelegateExecute", "/t", "REG_SZ", "/d", "", "/f"])?;
         }
@@ -166,49 +379,55 @@ pub(crate) fn rx_install() -> Result<(), String> {
         if run("powershell", &["-NoProfile", "-Command", &task]).is_ok() {
             let _ = run("reg", &["delete", RUN_KEY, "/v", "rs-overlay", "/f"]);
         } else {
-            WARN.lock().unwrap().push(t!("задача rs-overlay не создана: запуск через Run, с задержкой Windows", "rs-overlay task was not created: it starts via Run, with a Windows startup delay").into());
+            WARN.lock().unwrap().push(pt!("задача rs-overlay не создана: запуск через Run, с задержкой Windows", "rs-overlay task was not created: it starts via Run, with a Windows startup delay", "A tarefa rs-overlay não foi criada: ela inicia via Executar, com atraso na inicialização do Windows").into());
             run("reg", &["add", RUN_KEY, "/v", "rs-overlay", "/t", "REG_SZ", "/d", &format!("\"{}\" --overlay", sh.display()), "/f"])?;
         }
         run("reg", &["add", RX_SWITCH, "/v", "ReplaceExplorer", "/t", "REG_DWORD", "/d", "1", "/f"])?;
-        run("reg", &["add", WINLOGON_KEY, "/v", "AutoRestartShell", "/t", "REG_DWORD", "/d", "0", "/f"])?;
-        if fresh {
+        if first_setup || has_snapshot {
+            trim_write(AUTO_RESTART_SHELL.target, 0)?;
+        } else {
+            WARN.lock().unwrap().push(MISSING_AUTO_RESTART_BACKUP.get().into());
+        }
+        if first_setup {
             apply_service_trim();
         }
         // the bar's Start panel and the search list Start Menu shortcuts only: without one rust-explorer has no entry (and no icon) there
-        soft(t!("ярлык «Rust Explorer» в меню Пуск не создан", "Start menu shortcut 'Rust Explorer' was not created"), shortcut(&start_lnk("Rust Explorer"), &fm, ""));
+        soft(pt!("ярлык «Rust Explorer» в меню Пуск не создан", "Start menu shortcut 'Rust Explorer' was not created", "O atalho do menu Iniciar 'Rust Explorer' não foi criado"), shortcut(&start_lnk("Rust Explorer"), &fm, ""));
         // Start it now, with the user's normal token: explorer.exe opens a shortcut unelevated, and the shortcut carries --overlay.
         let lnk = rx_lnk();
         let _ = fs::create_dir_all(lnk.parent().unwrap());
-        soft(t!("overlay не запущен сейчас: он стартует при следующем входе", "overlay is not running now: it starts at the next logon"), shortcut(&lnk, &sh, "--overlay"));
+        soft(pt!("overlay не запущен сейчас: он стартует при следующем входе", "overlay is not running now: it starts at the next logon", "a sobreposição não está sendo executada agora: ela começa no próximo logon"), shortcut(&lnk, &sh, "--overlay"));
         let _ = Command::new("explorer.exe").arg(&lnk).spawn();
         Ok(())
     })
 }
 
 pub(crate) fn rx_uninstall() -> Result<(), String> {
+    let has_snapshot = AUTO_RESTART_SHELL.load(trim_read)?.is_some();
+    if !has_snapshot && !rx_dir().join("rust-explorer.exe").is_file() {
+        return Ok(());
+    }
     restore_service_trim()?;
     // Windows may restart its shell again; our hooks off; then the shell back, unelevated, only if none is running
-    let back = reg_dword(RX_STATE, "AutoRestartShell").unwrap_or(1);
-    let r = run("reg", &["add", WINLOGON_KEY, "/v", "AutoRestartShell", "/t", "REG_DWORD", "/d", &back.to_string(), "/f"]);
+    if !AUTO_RESTART_SHELL.restore(trim_read, trim_write, remove_dword)? && rx_dir().join("rust-explorer.exe").is_file() {
+        WARN.lock().unwrap().push(MISSING_AUTO_RESTART_BACKUP.get().into());
+    }
     let _ = run("reg", &["delete", RUN_KEY, "/v", "rs-overlay", "/f"]);
     let _ = run("schtasks", &["/delete", "/tn", "rs-overlay", "/f"]);
     let _ = run("reg", &["delete", RX_SWITCH, "/f"]);
-    for (i, k) in RX_FOLDERS.iter().enumerate() {
-        let _ = run("reg", &["delete", k, "/f"]); // only our HKCU override; the system's verbs under HKLM stay
-        let bak = rx_folders_bak(i);
-        if bak.is_file() {
-            soft(&tf!("привязка папок {k} не возвращена", "folder verbs {k} were not restored"), run("reg", &["import", &bak.display().to_string()]));
-        }
-    }
+    let folder_restore = restore_folder_bindings();
     for n in ["rs-shell.exe", "rust-explorer.exe"] {
         let _ = run("taskkill", &["/f", "/im", n]);
     }
     let _ = run("powershell", &["-NoProfile", "-Command", r#"if (-not (Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Where-Object { $_.CommandLine -match '(?i)explorer\.exe"?(\s+/NoUACCheck)?\s*$' })) { runas /trustlevel:0x20000 C:\Windows\explorer.exe }"#]);
+    // Hand back the shell even on a failed import. Keep the executable and every export for retry.
+    folder_restore?;
     let _ = fs::remove_file(rx_lnk());
     let _ = fs::remove_file(start_lnk("Rust Explorer"));
-    let _ = fs::remove_dir_all(rx_dir());
-    if r.is_ok() {
-        let _ = run("reg", &["delete", RX_STATE, "/f"]);
+    let remove_snapshot = run("reg", &["delete", RX_STATE, "/f"]);
+    if has_snapshot {
+        remove_snapshot?;
     }
-    r
+    let _ = fs::remove_dir_all(rx_dir());
+    Ok(())
 }

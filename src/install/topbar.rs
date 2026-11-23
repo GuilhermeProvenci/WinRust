@@ -48,9 +48,27 @@ pub(crate) fn shells_run(script: &str) -> Result<(), String> {
 pub(crate) fn bar_install() -> Result<(), String> {
     with_payload(&["topbar.exe", "rs-du.exe", "reshell.exe"], |d| {
         let dst = bar_dir().join("topbar.exe");
-        let _ = run("taskkill", &["/f", "/im", "topbar.exe"]);
         fs::create_dir_all(bar_dir()).map_err(|e| e.to_string())?;
-        put(&d.join("topbar.exe"), &dst)?;
+        // The shell watchdog can restart the bar immediately after taskkill.
+        // Rename the running image first, then publish the new one at its normal
+        // path before stopping it. A failed copy restores the original image.
+        let previous = bar_dir().join(format!("topbar.previous-{}.exe", std::process::id()));
+        let had_old = dst.is_file();
+        if had_old {
+            if previous.exists() { return Err(format!("{}: backup already exists", previous.display())); }
+            fs::rename(&dst, &previous).map_err(|e| format!("{}: {e}", dst.display()))?;
+        }
+        if let Err(error) = put(&d.join("topbar.exe"), &dst) {
+            if had_old {
+                let _ = fs::remove_file(&dst);
+                if let Err(restore) = fs::rename(&previous, &dst) {
+                    return Err(format!("{error}; restore {}: {restore}", previous.display()));
+                }
+            }
+            return Err(error);
+        }
+        let _ = run("taskkill", &["/f", "/im", "topbar.exe"]);
+        if had_old { let _ = fs::remove_file(previous); }
         fs::create_dir_all(tm_dir()).map_err(|e| e.to_string())?;
         put(&d.join("rs-du.exe"), &tm_dir().join("rs-du.exe"))?; // topbar menu "Чистильщик диска"
         let rsh = bar_dir().join("reshell.exe"); // Win+1/2/3 desktop hotkeys, no args = hotkeys
@@ -70,11 +88,11 @@ pub(crate) fn bar_install() -> Result<(), String> {
         if run("powershell", &["-NoProfile", "-Command", &task]).is_ok() && run("schtasks", &["/run", "/tn", "topbar"]).is_ok() {
             let _ = run("reg", &["delete", RUN_KEY, "/v", "topbar", "/f"]);
         } else {
-            WARN.lock().unwrap().push(t!("задача topbar не создана: запуск через Run, без прав администратора", "topbar task was not created: it starts via Run, without administrator rights").into());
+            WARN.lock().unwrap().push(pt!("задача topbar не создана: запуск через Run, без прав администратора", "topbar task was not created: it starts via Run, without administrator rights", "A tarefa da topbar não foi criada: ela inicia via Executar, sem direitos de administrador").into());
             run("reg", &["add", RUN_KEY, "/v", "topbar", "/t", "REG_SZ", "/d", &format!("\"{}\"", dst.display()), "/f"])?;
             let _ = Command::new("explorer.exe").arg(&dst).spawn(); // normal user token, like rs-launcher
         }
-        soft(t!("профиль PowerShell не записан", "PowerShell profile was not written"), profile_install()); // a shell nicety, must not fail the bar install
+        soft(pt!("профиль PowerShell не записан", "PowerShell profile was not written", "O perfil do PowerShell não foi gravado"), profile_install()); // a shell nicety, must not fail the bar install
         Ok(())
     })
 }
