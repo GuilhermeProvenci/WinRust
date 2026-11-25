@@ -116,8 +116,7 @@ pub(crate) fn component_current(name: &str) -> bool {
 /// Unpacks the `need`ed bundled plugins, runs `f` on them, deletes them. The folder is under Program Files (admin-only writable),
 /// not %TEMP%: a user-level process must not be able to swap an exe that is about to be installed as a SYSTEM task.
 pub(crate) fn with_payload<T>(need: &[&str], f: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
-    let d = program_files().join(format!("plugin-launcher-tmp-{}", std::process::id()));
-    fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+    let d = payload_dir()?;
     let disk = disk_payload();
     let unpack = |n: &&str| -> Result<(), String> {
         let bytes = PAYLOAD.iter().find(|(m, _)| m == n).ok_or(ptf!("нет {n} в сборке", "{n} is missing from the build", "{n} está faltando na compilação"))?.1;
@@ -131,8 +130,32 @@ pub(crate) fn with_payload<T>(need: &[&str], f: impl FnOnce(&Path) -> Result<T, 
         .map_err(|e| ptf!("распаковка {n}: {e}", "unpacking {n}: {e}", "desempacotando {n}: {e}"))
     };
     let r = need.iter().try_for_each(unpack).and_then(|_| f(&d));
-    let _ = fs::remove_dir_all(&d);
+    if let Err(e) = fs::remove_dir_all(&d) {
+        log(&format!("cannot remove {}: {e}", d.display())); // left behind: the next call uses another name, so it is harmless
+    }
     r
+}
+
+/// A fresh folder under Program Files for one `with_payload` call. A new name every time (process id + a counter): a folder
+/// the previous call removed can still be "pending delete" while something (a scanner, a process started from it) holds a
+/// handle, and creating that name again then fails with "access denied". Creation is retried a few times, and every failure
+/// goes to the log: the first one seen in the field (rust-search and rtaskmgr-win32 at the start of an update, then fine)
+/// left no trace.
+fn payload_dir() -> Result<PathBuf, String> {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let mut last = String::new();
+    for attempt in 0..5 {
+        let d = program_files().join(format!("plugin-launcher-tmp-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        match fs::create_dir_all(&d) {
+            Ok(()) => return Ok(d),
+            Err(e) => {
+                last = format!("{}: {e}", d.display());
+                log(&format!("cannot create {last} (attempt {})", attempt + 1));
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+        }
+    }
+    Err(last)
 }
 
 pub(crate) fn program_files() -> PathBuf {
