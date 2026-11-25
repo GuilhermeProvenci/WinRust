@@ -18,7 +18,7 @@
 //   drag-to-position / auto-arrange, items from the public desktop can't be renamed.
 #![windows_subsystem = "windows"]
 use std::{cell::RefCell, env, fs, os::windows::fs::MetadataExt, path::{Path, PathBuf}, ptr, sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed}};
-use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{BLACK_BRUSH, GetStockObject, InvalidateRect}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
+use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{InvalidateRect}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
 
 mod zipx; // our own ZIP engine (deflate, inflate, container)
 mod jobs; // our own copier, ZIP packer, ZIP/7z unpacker (background, progress in the status line)
@@ -26,6 +26,7 @@ mod shellwin; // registers the window as a shell window: "Show in folder" from o
 mod ui; // the look: palette, painted tabs / toolbar / address pill / status line, dark theme
 
 static DESKTOP: AtomicBool = AtomicBool::new(false);
+fn tr(en: &'static str, pt: &'static str) -> &'static str { if cfg!(test) { en } else { winrust_common::locales::lookup_current(en).unwrap_or(if winrust_common::language() == "pt-BR" { pt } else { en }) } }
 fn desk() -> bool { DESKTOP.load(Relaxed) }
 const CLR_NONE: isize = 0xFFFF_FFFF; // list background / text background: let the parent's wallpaper show through
 thread_local! { static WALL: std::cell::Cell<(isize, i32, i32)> = const { std::cell::Cell::new((0, 0, 0)) }; } // (HBITMAP, w, h)
@@ -141,6 +142,7 @@ fn sort_rows(rows: &mut [Row], col: usize, asc: bool) {
 
 const DAY: i64 = 864_000_000_000; // FILETIME ticks per day
 const BUCKETS: [&str; 8] = ["Today", "Yesterday", "Earlier this week", "Last week", "Earlier this month", "Last month", "Earlier this year", "A long time ago"];
+const BUCKETS_PT: [&str; 8] = ["Hoje", "Ontem", "No começo desta semana", "Semana passada", "No começo deste mês", "Mês passado", "No começo deste ano", "Há muito tempo"];
 
 thread_local! {
     static BCTX: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) }; // (today's local day number, local - UTC in ticks)
@@ -184,7 +186,7 @@ fn add_headers(rows: &mut Vec<Row>) {
         let b = bucket(r.time);
         if b != last {
             last = b;
-            out.push(Row { name: format!("?{}", BUCKETS[b as usize]), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
+            out.push(Row { name: format!("?{}", tr(BUCKETS[b as usize], BUCKETS_PT[b as usize])), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
         }
         out.push(r);
     }
@@ -193,9 +195,9 @@ fn add_headers(rows: &mut Vec<Row>) {
 
 /// Explorer's "Type" column in short form: "File folder", "TXT file", "File".
 fn type_text(name: &str, dir: bool) -> String {
-    if dir { return "File folder".into(); }
+    if dir { return tr("File folder", "Pasta de arquivos").into(); }
     let file = name.rsplit('\\').next().unwrap_or(name);
-    match file.rsplit_once('.') { Some((stem, e)) if !stem.is_empty() && !e.is_empty() => format!("{} file", e.to_uppercase()), _ => "File".into() }
+    match file.rsplit_once('.') { Some((stem, e)) if !stem.is_empty() && !e.is_empty() => if !cfg!(test) && winrust_common::language() == "pt-BR" { format!("Arquivo {}", e.to_uppercase()) } else { format!("{} file", e.to_uppercase()) }, _ => tr("File", "Arquivo").into() }
 }
 
 /// Explorer shows file sizes in KB; the bigger ones read better in MB / GB.
@@ -326,7 +328,7 @@ unsafe fn activate(h: HWND, p: PathBuf, is_dir: bool) {
 fn zip_menu(h: HWND, paths: &[PathBuf]) {
     let id = unsafe {
         let m = CreatePopupMenu();
-        for (i, t) in [(1usize, "Open"), (2, "Copy"), (3, "Extract here")] { AppendMenuW(m, MF_STRING, i, w(t).as_ptr()); }
+        for (i, t) in [(1usize, tr("Open", "Abrir")), (2, tr("Copy", "Copiar")), (3, tr("Extract here", "Extrair aqui"))] { AppendMenuW(m, MF_STRING, i, w(t).as_ptr()); }
         let mut pt: POINT = std::mem::zeroed();
         GetCursorPos(&mut pt);
         let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -356,13 +358,12 @@ fn zip_menu(h: HWND, paths: &[PathBuf]) {
 /// The shell menu for the selection, with our "Compress to ZIP" / "Extract here" on top.
 fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
     if zipx::split_zip(dir).is_some() { return zip_menu(h, paths); }
-    let mut extra = vec![(MENU_ZIP, "Compress to ZIP")];
+    let mut extra = vec![(MENU_ZIP, tr("Compress to ZIP", "Compactar em ZIP"))];
     if paths.iter().all(|p| p.is_file() && jobs::is_archive(p)) {
-        extra.insert(0, (MENU_EXTRACT, "Extract here"));
+        extra.insert(0, (MENU_EXTRACT, tr("Extract here", "Extrair aqui")));
     }
-    // the shell menu has no Rename here (it needs the shell's own folder view to answer it): the same edit box as F2
-    if paths.len() == 1 { extra.push((MENU_RENAME, "Rename")); }
-    if let [p] = paths { if p.is_dir() { extra.push((MENU_PIN, if ui::pins().contains(p) { "Unpin from Quick access" } else { "Pin to Quick access" })); } }
+    if paths.len() == 1 { extra.push((MENU_RENAME, tr("Rename", "Renomear"))); }
+    if let [p] = paths { if p.is_dir() { extra.push((MENU_PIN, if ui::pins().contains(p) { tr("Unpin from Quick access", "Desafixar do Acesso rápido") } else { tr("Pin to Quick access", "Fixar no Acesso rápido") })); } }
     let picked = sh::show(h, paths, if jobs::busy() { &[] } else { &extra }).ok().flatten();
     match picked {
         Some(MENU_PIN) => ui::toggle_pin(&paths[0]),
@@ -409,13 +410,13 @@ fn set_icons_hidden(hide: bool) {
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn bg_menu(h: HWND) {
     let m = CreatePopupMenu();
-    for (id, t) in [(1usize, "New folder"), (2, "New text file"), (3, "Paste"), (4, "Refresh"), (5, "Properties")] { AppendMenuW(m, MF_STRING, id, w(t).as_ptr()); }
+    for (id, t) in [(1usize, tr("New folder", "Nova pasta")), (2, tr("New text file", "Novo arquivo de texto")), (3, tr("Paste", "Colar")), (4, tr("Refresh", "Atualizar")), (5, tr("Properties", "Propriedades"))] { AppendMenuW(m, MF_STRING, id, w(t).as_ptr()); }
     let disk = tool("wiztree");
-    if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w("Disk usage (WinRust Disk)").as_ptr()); }
-    if desk() { for (id, l) in [(8usize, "Sort icons by name"), (9, "Sort icons by date"), (10, "Sort icons by size"), (11, "Arrange icons")] { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); } }
-    if !desk() { AppendMenuW(m, MF_STRING, 13, w(if group_on() { "No grouping" } else { "Group by date" }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { "Large icons" } else { "Small icons" }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { "Show desktop icons" } else { "Hide desktop icons" }).as_ptr()); }
+    if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w(tr("Disk usage (WinRust Disk)", "Uso do disco (WinRust Disk)")).as_ptr()); }
+    if desk() { for (id, l) in [(8usize, tr("Sort icons by name", "Ordenar ícones por nome")), (9, tr("Sort icons by date", "Ordenar ícones por data")), (10, tr("Sort icons by size", "Ordenar ícones por tamanho")), (11, tr("Arrange icons", "Organizar ícones"))] { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); } }
+    if !desk() { AppendMenuW(m, MF_STRING, 13, w(if group_on() { tr("No grouping", "Não agrupar") } else { tr("Group by date", "Agrupar por data") }).as_ptr()); }
+    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { tr("Large icons", "Ícones grandes") } else { tr("Small icons", "Ícones pequenos") }).as_ptr()); }
+    if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { tr("Show desktop icons", "Mostrar ícones da área de trabalho") } else { tr("Hide desktop icons", "Ocultar ícones da área de trabalho") }).as_ptr()); }
     let mut pt: POINT = std::mem::zeroed();
     GetCursorPos(&mut pt);
     let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -1402,7 +1403,7 @@ mod desk {
     pub unsafe extern "system" fn workerw_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         if m == WM_ERASEBKGND {
             let (bmp, cw, ch) = WALL.get();
-            if bmp != 0 { wall::paint(wp as _, bmp, cw, ch); } else { let mut r: RECT = std::mem::zeroed(); GetClientRect(h, &mut r); FillRect(wp as _, &r, GetStockObject(BLACK_BRUSH) as _); }
+            if bmp != 0 { wall::paint(wp as _, bmp, cw, ch); } else { let mut r: RECT = std::mem::zeroed(); GetClientRect(h, &mut r); FillRect(wp as _, &r, windows_sys::Win32::Graphics::Gdi::GetSysColorBrush(1) as _); }
             return 1;
         }
         DefWindowProcW(h, m, wp, lp)
@@ -1523,7 +1524,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     let _ = TX.set(sh::start_thumbs(h as isize));
                     ST.with_borrow_mut(|st| st.himl = himl as isize);
                     // the same columns, in the same order, as Explorer's details view
-                    col(list, 0, "Name", ui::sc(360), false); col(list, 1, "Date modified", ui::sc(160), false); col(list, 2, "Type", ui::sc(140), false); col(list, 3, "Size", ui::sc(96), true);
+                    col(list, 0, tr("Name", "Nome"), ui::sc(360), false); col(list, 1, tr("Date modified", "Data de modificação"), ui::sc(160), false); col(list, 2, tr("Type", "Tipo"), ui::sc(140), false); col(list, 3, tr("Size", "Tamanho"), ui::sc(96), true);
                     ui::style_list(list);
                 }
                 ST.with_borrow_mut(|st| { st.list = list; st.tab = tab; st.edit = edit; st.tabs = vec![PathBuf::new()]; });
@@ -1820,7 +1821,7 @@ fn main() {
         let cls = w("RustExplorer");
         let desktop = env::args().nth(1).as_deref() == Some("--desktop");
         // desktop without a wallpaper file shows black, not window white
-        let bg = if desktop { GetStockObject(BLACK_BRUSH) as _ } else { windows_sys::Win32::Graphics::Gdi::CreateSolidBrush(ui::pal().bg) };
+        let bg = if desktop { windows_sys::Win32::Graphics::Gdi::GetSysColorBrush(1) as _ } else { windows_sys::Win32::Graphics::Gdi::CreateSolidBrush(ui::pal().bg) };
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(ui::proc), hInstance: inst, lpszClassName: w("RxChrome").as_ptr(), hCursor: LoadCursorW(0 as _, IDC_ARROW), ..std::mem::zeroed() });
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(ui::nav_proc), hInstance: inst, lpszClassName: w("RxNav").as_ptr(), hCursor: LoadCursorW(0 as _, IDC_ARROW), ..std::mem::zeroed() });
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc), hInstance: inst, lpszClassName: cls.as_ptr(), hCursor: LoadCursorW(0 as _, IDC_ARROW), hIcon: LoadIconW(inst, 1 as _), hbrBackground: bg, ..std::mem::zeroed() });

@@ -726,7 +726,7 @@ pub unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> L
             // right click on a pinned folder: unpin it
             if let Some(p) = nav_hit(y).and_then(nav_path).filter(|p| pins().contains(p)) {
                 let menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 1, w("Unpin from Quick access").as_ptr());
+                AppendMenuW(menu, MF_STRING, 1, w(super::tr("Unpin from Quick access", "Desafixar do Acesso rápido")).as_ptr());
                 let mut pt: POINT = std::mem::zeroed();
                 GetCursorPos(&mut pt);
                 let id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -783,16 +783,16 @@ pub fn nav_init(h: HWND) {
     NAVWND.set(h as isize);
     let home = PathBuf::from(env::var_os("USERPROFILE").unwrap_or_default());
     let head = |t: &str| NavItem { title: t.into(), path: PathBuf::new(), glyph: "", cap: None };
-    let mut v = vec![head("Quick access"), NavItem { title: "Home".into(), path: home.clone(), glyph: "\u{E80F}", cap: None }];
+    let mut v = vec![head(super::tr("Quick access", "Acesso rápido")), NavItem { title: super::tr("Home", "Início").into(), path: home.clone(), glyph: "\u{E80F}", cap: None }];
     use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music, FOLDERID_Pictures, FOLDERID_Videos};
-    for (t, id, g) in [("Desktop", &FOLDERID_Desktop, "\u{E7F4}"), ("Downloads", &FOLDERID_Downloads, "\u{E896}"), ("Documents", &FOLDERID_Documents, "\u{E8A5}"), ("Pictures", &FOLDERID_Pictures, "\u{E91B}"), ("Music", &FOLDERID_Music, "\u{E8D6}"), ("Videos", &FOLDERID_Videos, "\u{E714}")] {
+    for (t, id, g) in [(super::tr("Desktop", "Área de trabalho"), &FOLDERID_Desktop, "\u{E7F4}"), ("Downloads", &FOLDERID_Downloads, "\u{E896}"), (super::tr("Documents", "Documentos"), &FOLDERID_Documents, "\u{E8A5}"), (super::tr("Pictures", "Imagens"), &FOLDERID_Pictures, "\u{E91B}"), (super::tr("Music", "Música"), &FOLDERID_Music, "\u{E8D6}"), (super::tr("Videos", "Vídeos"), &FOLDERID_Videos, "\u{E714}")] {
         let Some(p) = crate::sh::known_dir(id).filter(|p| p.is_dir()) else { continue };
         v.push(NavItem { title: t.into(), path: p, glyph: g, cap: None });
     }
     for p in pins() {
         if p.is_dir() { v.push(NavItem { title: p.file_name().map_or_else(|| p.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned()), path: p, glyph: "\u{E718}", cap: None }); }
     }
-    v.push(head("This PC"));
+    v.push(head(super::tr("This PC", "Este Computador")));
     unsafe {
         use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
         let mask = GetLogicalDrives();

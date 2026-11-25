@@ -97,7 +97,7 @@ impl IDispatch_Impl for Doc_Impl {
 }
 impl IServiceProvider_Impl for Doc_Impl {
     fn QueryService(&self, _svc: *const GUID, riid: *const GUID, out: *mut *mut c_void) -> Result<()> {
-       
+
         let v: IShellView = View { hwnd: self.hwnd, dir: self.dir.clone(), resident: self.resident }.into();
         unsafe { v.query(&*riid, out).ok() }
     }
@@ -120,7 +120,7 @@ impl IShellView_Impl for View_Impl {
     fn AddPropertySheetPages(&self, _: u32, _: LPFNSVADDPROPSHEETPAGE, _: LPARAM) -> Result<()> { nope() }
     fn SaveViewState(&self) -> Result<()> { Ok(()) }
     fn SelectItem(&self, pidl: *const ITEMIDLIST, _flags: u32) -> Result<()> {
-       
+
         let path = item_path(pidl, &cur(&self.dir)).ok_or(E_FAIL)?;
         if self.resident {
             let exe = std::env::current_exe().map_err(|_| E_FAIL)?;

@@ -1,4 +1,5 @@
 target/
+/dist/
 /share
 /ripgrep
 /payload/*.exe
