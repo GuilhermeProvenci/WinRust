@@ -139,6 +139,7 @@ static DESK_HIDE: AtomicBool = AtomicBool::new(false); // the desktop in front a
 static WIN_ALONE: AtomicBool = AtomicBool::new(false);
 static BAR: AtomicIsize = AtomicIsize::new(0); // the bar window, for the hook thread
 const WIN_NUM: u32 = WM_APP + 15; // posted by the keyboard hook: Win+1..9 (wp 0..8) = the n-th button of the bar
+const WIN_X: u32 = WM_APP + 17; // posted by the keyboard hook: Win+X = our power-user menu (start_menu)
 const NEXT_LANG: u32 = WM_APP + 16; // posted by the keyboard hook: Win+Space with no explorer (wp 1 = Shift held: previous layout)
 const VOLKEY: u32 = WM_APP + 14; // posted by the keyboard hook: a volume key (wp 0 up, 1 down, 2 mute)
 const SNIP: u32 = WM_APP + 13; // posted by the keyboard hook: PrtSc / Win+Shift+S with no explorer to handle them
@@ -1283,14 +1284,29 @@ unsafe fn load_pins() {
     }
 }
 
+/// The exe the File Explorer pin stands for (lower-case): its icon location, "%windir%\explorer.exe".
+fn file_explorer_exe() -> String {
+    expand_env(r"%windir%\explorer.exe").to_lowercase()
+}
+
+/// The windows of WinRust's file manager belong to the File Explorer pin when there is one: that pin is what the user clicks
+/// to open "Explorer" here, and only windows of explorer.exe matched it, so its button never showed them (a minimized
+/// window looked gone and the click started a second one). Without such a pin they keep their own exe's button.
+fn as_pinned_exe(exe: &str, explorer: &str, explorer_pinned: bool) -> String {
+    if explorer_pinned && exe.ends_with(r"\rust-explorer\rust-explorer.exe") { explorer.to_string() } else { exe.to_string() }
+}
+
 fn refresh_buttons() {
     let mut wins: Vec<HWND> = Vec::new();
     unsafe { EnumWindows(Some(collect), &mut wins as *mut _ as LPARAM) };
     let mut btns = vec![Btn { pin: None, wins: vec![], icon: null_mut() }];
     PINS.with_borrow(|pins| btns.extend((0..pins.len()).map(|i| Btn { pin: Some(i), wins: vec![], icon: null_mut() })));
     let mut loose: Vec<HWND> = Vec::new();
+    let explorer = file_explorer_exe();
+    let explorer_pinned = PINS.with_borrow(|p| p.iter().any(|p| p.target == explorer));
     for w in wins {
         let exe = unsafe { exe_of(w) };
+        let exe = as_pinned_exe(&exe, &explorer, explorer_pinned);
         let pin = PINS.with_borrow(|p| p.iter().position(|p| (!p.target.is_empty() && p.target == exe) || p.squirrel.as_ref().is_some_and(|id| squirrel_matches(id, &exe))));
         match pin {
             Some(i) => btns[1 + i].wins.push(w),
@@ -2091,8 +2107,18 @@ unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                 }
                 return 1;
             }
-            // Win+R: without explorer nobody opens the Run box
-            if !EXPLORER_UP.load(Relaxed) && k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+            // Win+X: our power-user menu (the one Start's right click opens); Explorer's needs its own taskbar, which is hidden
+            if k.vkCode == b'X' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+                if down0 {
+                    WIN_ALONE.store(false, Relaxed);
+                    keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
+                    keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
+                    PostMessageW(BAR.load(Relaxed) as HWND, WIN_X, 0, 0);
+                }
+                return 1;
+            }
+            // Win+R: always our Run box, also while Explorer runs (lent to Settings, or not replaced): its own box is the plain one
+            if k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
                 if down0 {
                     WIN_ALONE.store(false, Relaxed);
                     keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
@@ -3557,6 +3583,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WIN_START => fly::toggle(fly::Kind::Start),
         ALT_TAB => alt_tab(wp == 1),
         WIN_NUM => win_num(wp),
+        WIN_X => start_menu(),
         NEXT_LANG => next_lang(hwnd, wp == 1),        ALT_UP => alt_done(wp == 1),
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
@@ -3934,6 +3961,15 @@ mod tests {
         assert_eq!(super::row_origin(300, 180, 200, 500, 1000, 8), 388);
         assert_eq!(super::row_origin(300, 500, 200, 500, 1000, 8), 300);
     }
+    #[test]
+    fn file_manager_windows_belong_to_the_file_explorer_pin() {
+        use super::as_pinned_exe;
+        let (rx, ex) = (r"c:\program files\rust-explorer\rust-explorer.exe", r"c:\windows\explorer.exe");
+        assert_eq!(as_pinned_exe(rx, ex, true), ex); // the pin the user clicks gets the windows
+        assert_eq!(as_pinned_exe(rx, ex, false), rx); // no such pin: the file manager's own pin keeps them
+        assert_eq!(as_pinned_exe(r"c:\tools\other.exe", ex, true), r"c:\tools\other.exe");
+    }
+
     #[test]
     fn fullscreen_geometry_distinguishes_maximized_and_other_monitor(){
         use super::*;
