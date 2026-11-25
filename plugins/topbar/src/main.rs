@@ -2048,6 +2048,10 @@ unsafe fn run_box() {
 
 /// Win key on its own opens our Start. Runs on its own thread so a busy bar can never stall the system keyboard.
 unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    kbhook::timed(n, w, l, kb_hook_inner)
+}
+
+unsafe fn kb_hook_inner(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if n >= 0 {
         let k = &*(l as *const KBDLLHOOKSTRUCT);
         let down0 = w == WM_KEYDOWN as usize || w == WM_SYSKEYDOWN as usize;
