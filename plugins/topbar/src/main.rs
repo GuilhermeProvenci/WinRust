@@ -139,7 +139,6 @@ static DESK_HIDE: AtomicBool = AtomicBool::new(false); // the desktop in front a
 static WIN_ALONE: AtomicBool = AtomicBool::new(false);
 static BAR: AtomicIsize = AtomicIsize::new(0); // the bar window, for the hook thread
 const WIN_NUM: u32 = WM_APP + 15; // posted by the keyboard hook: Win+1..9 (wp 0..8) = the n-th button of the bar
-const RUN_BOX: u32 = WM_APP + 17; // posted by the keyboard hook: Win+R with no explorer (EnumWindows has no place in the hook callback)
 const NEXT_LANG: u32 = WM_APP + 16; // posted by the keyboard hook: Win+Space with no explorer (wp 1 = Shift held: previous layout)
 const VOLKEY: u32 = WM_APP + 14; // posted by the keyboard hook: a volume key (wp 0 up, 1 down, 2 mute)
 const SNIP: u32 = WM_APP + 13; // posted by the keyboard hook: PrtSc / Win+Shift+S with no explorer to handle them
@@ -2098,7 +2097,7 @@ unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                     WIN_ALONE.store(false, Relaxed);
                     keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
                     keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
-                    PostMessageW(BAR.load(Relaxed) as HWND, RUN_BOX, 0, 0); // the window search is not for a hook callback
+                    run_box();
                 }
                 return 1;
             }
@@ -3558,9 +3557,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WIN_START => fly::toggle(fly::Kind::Start),
         ALT_TAB => alt_tab(wp == 1),
         WIN_NUM => win_num(wp),
-        NEXT_LANG => next_lang(hwnd, wp == 1),
-        RUN_BOX => run_box(),
-        ALT_UP => alt_done(wp == 1),
+        NEXT_LANG => next_lang(hwnd, wp == 1),        ALT_UP => alt_done(wp == 1),
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
         SNIP => clip::start(),
