@@ -20,6 +20,7 @@ extern crate winrust_common;
 use winrust_common as i18n;
 use winrust_common::style::{Style, card, on_accent, pal, rgb, style, ui_face};
 mod clip;
+mod kbhook;
 mod monitors;
 mod fly;
 mod quick;
@@ -138,6 +139,7 @@ static DESK_HIDE: AtomicBool = AtomicBool::new(false); // the desktop in front a
 static WIN_ALONE: AtomicBool = AtomicBool::new(false);
 static BAR: AtomicIsize = AtomicIsize::new(0); // the bar window, for the hook thread
 const WIN_NUM: u32 = WM_APP + 15; // posted by the keyboard hook: Win+1..9 (wp 0..8) = the n-th button of the bar
+const RUN_BOX: u32 = WM_APP + 17; // posted by the keyboard hook: Win+R with no explorer (EnumWindows has no place in the hook callback)
 const NEXT_LANG: u32 = WM_APP + 16; // posted by the keyboard hook: Win+Space with no explorer (wp 1 = Shift held: previous layout)
 const VOLKEY: u32 = WM_APP + 14; // posted by the keyboard hook: a volume key (wp 0 up, 1 down, 2 mute)
 const SNIP: u32 = WM_APP + 13; // posted by the keyboard hook: PrtSc / Win+Shift+S with no explorer to handle them
@@ -1850,9 +1852,15 @@ unsafe fn fullscreen_now(bar: HWND) -> bool {
     fullscreen_window(GetForegroundWindow(),bar)
 }
 
-fn covers_bar_monitor(window:RECT,monitor:RECT,same_monitor:bool)->bool {
-    same_monitor && window.left<=monitor.left && window.top<=monitor.top
-        && window.right>=monitor.right && window.bottom>=monitor.bottom
+/// Whether `window` is fullscreen content of `monitor`. A window that still has its title bar (a game in "borderless window"
+/// mode such as Dota 2 keeps the caption style) counts only when it is sized exactly to the monitor: a framed window that
+/// merely overhangs it is an ordinary one (#88). Maximized captioned windows are rejected before this is asked.
+fn covers_bar_monitor(window:RECT,monitor:RECT,same_monitor:bool,caption:bool)->bool {
+    if !same_monitor { return false; }
+    if caption {
+        return (window.left,window.top,window.right,window.bottom)==(monitor.left,monitor.top,monitor.right,monitor.bottom);
+    }
+    window.left<=monitor.left && window.top<=monitor.top && window.right>=monitor.right && window.bottom>=monitor.bottom
 }
 
 unsafe fn fullscreen_window(fg:HWND,bar:HWND)->bool {
@@ -1871,17 +1879,20 @@ unsafe fn fullscreen_window(fg:HWND,bar:HWND)->bool {
     if !protected_game_class(&class) && ordinary_maximized(IsZoomed(fg) != 0, style) { return false; }
     let mut r: RECT = zeroed();
     if GetWindowRect(fg, &mut r)==0{return false;}
-    // Invisible resize borders of a maximized window are not fullscreen content.
-    let mut frame:RECT=zeroed();
-    if DwmGetWindowAttribute(fg,DWMWA_EXTENDED_FRAME_BOUNDS as u32,&mut frame as *mut _ as _,size_of::<RECT>()as u32)>=0
-        && frame.right>frame.left && frame.bottom>frame.top {r=frame;}
-    if IsZoomed(fg)!=0 && GetWindowLongW(fg,GWL_STYLE)as u32&WS_CAPTION==WS_CAPTION{return false;}
+    let caption=style&WS_CAPTION==WS_CAPTION;
+    if IsZoomed(fg)!=0 && caption{return false;}
     let monitor=MonitorFromWindow(fg,MONITOR_DEFAULTTONEAREST);
     let mut mi: MONITORINFO = zeroed();
     mi.cbSize = size_of::<MONITORINFO>() as u32;
     if GetMonitorInfoW(monitor, &mut mi)==0{return false;}
     let m = mi.rcMonitor;
-    covers_bar_monitor(r,m,monitor==MonitorFromWindow(bar,MONITOR_DEFAULTTONEAREST))
+    let same=monitor==MonitorFromWindow(bar,MONITOR_DEFAULTTONEAREST);
+    // The window rect first: it is what a game sets with SetWindowPos. The visible frame (without the invisible resize
+    // borders DWM leaves out) second, for windows that overhang their own border.
+    if covers_bar_monitor(r,m,same,caption){return true;}
+    let mut frame:RECT=zeroed();
+    DwmGetWindowAttribute(fg,DWMWA_EXTENDED_FRAME_BOUNDS as u32,&mut frame as *mut _ as _,size_of::<RECT>()as u32)>=0
+        && frame.right>frame.left && frame.bottom>frame.top && covers_bar_monitor(frame,m,same,caption)
 }
 
 fn protected_game_class(class: &str) -> bool { class == "RiotWindowClass" }
@@ -2087,7 +2098,7 @@ unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                     WIN_ALONE.store(false, Relaxed);
                     keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
                     keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
-                    run_box();
+                    PostMessageW(BAR.load(Relaxed) as HWND, RUN_BOX, 0, 0); // the window search is not for a hook callback
                 }
                 return 1;
             }
@@ -3548,6 +3559,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         ALT_TAB => alt_tab(wp == 1),
         WIN_NUM => win_num(wp),
         NEXT_LANG => next_lang(hwnd, wp == 1),
+        RUN_BOX => run_box(),
         ALT_UP => alt_done(wp == 1),
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
@@ -3815,25 +3827,7 @@ fn main() {
         SetTimer(hwnd, 3, 250, None); // fullscreen watch
         if !monitors::secondary() {
         windows_sys::Win32::UI::Accessibility::SetWinEventHook(0x000B, 0x000B, null_mut(), Some(snap_proc), 0, 0, 0);
-        thread::spawn(|| {
-            let mut hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0);
-            // Windows silently drops a low-level hook that once answers too slowly (busy boot), leaving Win+R, Start and
-            // Alt+Tab dead with no explorer to fall back on: set it again now and then. Callbacks run only inside
-            // GetMessageW on this thread, so swapping here never delivers a key twice.
-            SetTimer(null_mut(), 0, 30_000, None);
-            let mut m: MSG = zeroed();
-            while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
-                if m.message == WM_TIMER {
-                    let new = SetWindowsHookExW(WH_KEYBOARD_LL, Some(kb_hook), GetModuleHandleW(null()), 0);
-                    if !new.is_null() {
-                        if !hook.is_null() {
-                            UnhookWindowsHookEx(hook);
-                        }
-                        hook = new;
-                    }
-                }
-            }
-        }); }
+        kbhook::spawn(); }
         monitors::reconcile();
         let mut m: MSG = zeroed();
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
@@ -3947,12 +3941,18 @@ mod tests {
     fn fullscreen_geometry_distinguishes_maximized_and_other_monitor(){
         use super::*;
         let primary=RECT{left:0,top:0,right:1920,bottom:1080};
-        assert!(covers_bar_monitor(primary,primary,true));
-        assert!(!covers_bar_monitor(RECT{bottom:1040,..primary},primary,true));
-        assert!(!covers_bar_monitor(primary,primary,false));
+        assert!(covers_bar_monitor(primary,primary,true,false));
+        assert!(!covers_bar_monitor(RECT{bottom:1040,..primary},primary,true,false));
+        assert!(!covers_bar_monitor(primary,primary,false,false));
         let left=RECT{left:-1920,top:-200,right:0,bottom:880};
-        assert!(covers_bar_monitor(left,left,true));
-        assert!(!covers_bar_monitor(RECT{left:-1800,..left},left,true));
+        assert!(covers_bar_monitor(left,left,true,false));
+        assert!(!covers_bar_monitor(RECT{left:-1800,..left},left,true,false));
+        // a borderless-window game that kept its caption style (Dota 2): exactly the monitor is fullscreen ...
+        assert!(covers_bar_monitor(primary,primary,true,true));
+        // ... a framed window overhanging the monitor, or leaving the bar's strip, is not (#88)
+        assert!(!covers_bar_monitor(RECT{left:-8,top:-8,right:1928,bottom:1088},primary,true,true));
+        assert!(!covers_bar_monitor(RECT{bottom:1032,..primary},primary,true,true));
+        assert!(!covers_bar_monitor(primary,primary,false,true));
     }
 
     #[test]
