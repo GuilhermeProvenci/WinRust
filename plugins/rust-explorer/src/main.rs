@@ -586,6 +586,15 @@ fn shown_name(name: &str, desktop: bool) -> String {
     if lower.ends_with(".lnk") || lower.ends_with(".url") { file[..file.len() - 4].to_string() } else { file }
 }
 
+/// Type-ahead of the virtual list (LVN_ODFINDITEM): the first row at or after `start` whose name begins with `typed`, wrapping
+/// round to the top. Case is ignored; `name_at(i)` is None for the date-group heading rows, which are never a match. A list
+/// with LVS_OWNERDATA asks us because it has no items of its own to search: unanswered, it always lands on the first row.
+fn find_row(len: usize, start: usize, typed: &str, name_at: impl Fn(usize) -> Option<String>) -> Option<usize> {
+    let typed = typed.to_lowercase();
+    if typed.is_empty() || len == 0 { return None; }
+    (0..len).map(|k| (start.min(len) + k) % len).find(|&i| name_at(i).is_some_and(|n| n.to_lowercase().starts_with(&typed)))
+}
+
 fn label(dir: &PathBuf) -> String {
     dir.file_name().map_or_else(|| dir.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
 }
@@ -1712,6 +1721,19 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             }
                         });
                     }
+                    LVN_ODFINDITEMW if nm.hwndFrom == list => {
+                        // typing a name in the list selects the matching row (#130); -1 = no match, the selection stays
+                        let f = &*(lp as *const NMLVFINDITEMW);
+                        if f.lvfi.flags & LVFI_STRING == 0 || f.lvfi.psz.is_null() { return -1; }
+                        let mut n = 0;
+                        while *f.lvfi.psz.add(n) != 0 { n += 1; }
+                        let typed = String::from_utf16_lossy(std::slice::from_raw_parts(f.lvfi.psz, n));
+                        let start = usize::try_from(f.iStart).unwrap_or(0);
+                        let hit = ST.with(|c| c.try_borrow().ok().and_then(|st| {
+                            find_row(st.rows.len(), start, &typed, |i| st.rows.get(i).filter(|r| !r.hdr).map(|r| shown_name(&r.name, desk())))
+                        }));
+                        return hit.map_or(-1, |i| i as LRESULT);
+                    }
                     LVN_ITEMACTIVATE => {
                         let i = (*(lp as *const NMITEMACTIVATE)).iItem;
                         let hit = ST.with_borrow(|st| usize::try_from(i).ok().and_then(|i| st.rows.get(i)).filter(|r| !r.hdr).map(|r| (st.dir.join(&r.name), r.dir)));
@@ -1965,6 +1987,22 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn typing_a_name_finds_the_row_not_the_first_one() {
+        let rows = [None, Some("Apps"), Some("Documentos"), Some("docs.txt"), None, Some("Música"), Some("zip")];
+        let at = |i: usize| rows[i].map(str::to_string);
+        let find = |start, typed| super::find_row(rows.len(), start, typed, at);
+        assert_eq!(find(0, "z"), Some(6)); // used to land on row 0
+        assert_eq!(find(0, "DOC"), Some(2)); // case is ignored
+        assert_eq!(find(3, "doc"), Some(3)); // the search starts at the given row ...
+        assert_eq!(find(4, "doc"), Some(2)); // ... and wraps round to the top
+        assert_eq!(find(0, "mú"), Some(5)); // accents are plain characters
+        assert_eq!(find(0, "x"), None); // no match: the selection stays
+        assert_eq!(find(0, ""), None);
+        assert_eq!(find(99, "a"), Some(1)); // a stale start row is clamped
+        assert_eq!(super::find_row(0, 0, "a", |_| None), None);
+    }
+
     #[test]
     fn window_place_parses_and_rejects_junk() {
         let (max, r) = super::parse_place("max 10 20 1010 680").unwrap();
