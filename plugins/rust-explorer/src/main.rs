@@ -5,7 +5,8 @@
 // Ctrl+T/W/Tab tabs, Ctrl+M thumbnails, Ctrl+L/F4 address bar, Ctrl+F or "? terms" in the bar = instant search through the rs service, right click / Menu key = shell context menu.
 // Look: topbar's palette, painted tabs / toolbar / address pill and status line (src/ui.rs), dark title bar and list.
 // Clipboard is the system one (Ctrl+C/X/V interoperate with Explorer). Also: Alt+Left/Right back/forward, Alt+Up up,
-// Alt+Enter properties, F5 refresh, Ctrl+H hidden files, click a column header to sort, right click on empty space = folder menu.
+// Alt+Enter properties, F5 refresh, Ctrl+H hidden files, click a column header to sort, right click on empty space = folder menu,
+// middle click on a folder = open it in a new tab.
 // shortcuts: std::fs listing (not FindFirstFileEx large fetch), icons are extension-based (exe/lnk/ico/url/scr
 // per file) and synchronous (thumbnails: one background thread, 96px, no disk cache), internal copy/cut clipboard, silent rename errors,
 // search blocks the UI while it waits for the service (no async), the service pipe is admin-only so run as admin,
@@ -18,7 +19,7 @@
 //   drag-to-position / auto-arrange, items from the public desktop can't be renamed.
 #![windows_subsystem = "windows"]
 use std::{cell::RefCell, env, fs, os::windows::fs::MetadataExt, path::{Path, PathBuf}, ptr, sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed}};
-use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{InvalidateRect}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
+use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{InvalidateRect, ScreenToClient}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
 
 mod zipx; // our own ZIP engine (deflate, inflate, container)
 mod jobs; // our own copier, ZIP packer, ZIP/7z unpacker (background, progress in the status line)
@@ -721,6 +722,12 @@ fn col(list: HWND, i: i32, text: &str, width: i32, right: bool) {
 fn tab_new() {
     let tab = ST.with_borrow_mut(|st| { st.tabs.push(st.dir.clone()); st.active = st.tabs.len() - 1; st.tab });
     tab_text(tab, 0, "", true);
+}
+
+/// Opens `dir` in a new tab, staying on the current one (middle click on a folder row).
+fn tab_open(dir: PathBuf) {
+    let tab = ST.with_borrow_mut(|st| { st.tabs.push(dir); st.tab });
+    tab_text(tab, 0, "", true); // insert: the bar repaints with the new tab, the listing stays
 }
 
 fn tab_select(h: HWND, i: usize) {
@@ -1660,6 +1667,21 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             }
             // mouse buttons 4 / 5 (and keyboard media keys) arrive as APPCOMMAND_BROWSER_BACKWARD / _FORWARD
             0x0319 if !desk() && matches!((lp >> 16) & 0x7FF, 1 | 2) => { nav(h, (lp >> 16) & 0x7FF == 1); 1 }
+            // the list reports its button downs here: middle click on a folder row opens it in a new tab
+            WM_PARENTNOTIFY if !desk() && (wp & 0xFFFF) as u32 == WM_MBUTTONDOWN => {
+                let list = ST.with_borrow(|st| st.list);
+                let mut pt: POINT = std::mem::zeroed();
+                GetCursorPos(&mut pt);
+                if WindowFromPoint(pt) == list {
+                    ScreenToClient(list, &mut pt);
+                    let mut ht: LVHITTESTINFO = std::mem::zeroed();
+                    ht.pt = pt;
+                    let i = put(list, LVM_SUBITEMHITTEST, 0, &mut ht as *mut _ as isize);
+                    let dir = ST.with_borrow(|st| usize::try_from(i).ok().and_then(|i| st.rows.get(i)).filter(|r| r.dir && !r.hdr).map(|r| st.dir.join(&r.name)));
+                    if let Some(d) = dir { tab_open(d); }
+                }
+                0
+            }
             WM_SIZE => {
                 let list = ST.with_borrow(|st| st.list);
                 let (cw, ch) = ((lp & 0xFFFF) as i32, ((lp >> 16) & 0xFFFF) as i32);
