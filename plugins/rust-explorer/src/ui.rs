@@ -817,7 +817,7 @@ pub fn nav_init(h: HWND) {
         }
     }
     if !crate::sh::portable_devices().is_empty() {
-        v.push(NavItem { title: crate::sh::PORTABLE.into(), path: PathBuf::from(crate::sh::PORTABLE), glyph: "\u{E8EA}", cap: None }); // cell phone glyph
+        v.push(NavItem { title: tr("Portable devices", "Dispositivos portáteis").into(), path: PathBuf::from(crate::sh::PORTABLE), glyph: "\u{E8EA}", cap: None }); // cell phone glyph
     }
     NAV.with_borrow_mut(|n| *n = v);
 }

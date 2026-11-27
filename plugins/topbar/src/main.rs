@@ -1873,7 +1873,13 @@ unsafe fn fullscreen_now(bar: HWND) -> bool {
 fn covers_bar_monitor(window:RECT,monitor:RECT,same_monitor:bool,caption:bool)->bool {
     if !same_monitor { return false; }
     if caption {
-        return (window.left,window.top,window.right,window.bottom)==(monitor.left,monitor.top,monitor.right,monitor.bottom);
+        // Some games cover the display with a one-pixel overscan; keep ordinary
+        // framed windows with a full border out of fullscreen mode.
+        return window.left <= monitor.left && window.top <= monitor.top && window.right >= monitor.right && window.bottom >= monitor.bottom
+            && i64::from(monitor.left) - i64::from(window.left) <= 1
+            && i64::from(monitor.top) - i64::from(window.top) <= 1
+            && i64::from(window.right) - i64::from(monitor.right) <= 1
+            && i64::from(window.bottom) - i64::from(monitor.bottom) <= 1;
     }
     window.left<=monitor.left && window.top<=monitor.top && window.right>=monitor.right && window.bottom>=monitor.bottom
 }
@@ -3986,6 +3992,8 @@ mod tests {
         assert!(!covers_bar_monitor(RECT{left:-1800,..left},left,true,false));
         // a borderless-window game that kept its caption style (Dota 2): exactly the monitor is fullscreen ...
         assert!(covers_bar_monitor(primary,primary,true,true));
+        assert!(covers_bar_monitor(RECT{right:1921,..primary},primary,true,true));
+        assert!(!covers_bar_monitor(RECT{right:1922,..primary},primary,true,true));
         // ... a framed window overhanging the monitor, or leaving the bar's strip, is not (#88)
         assert!(!covers_bar_monitor(RECT{left:-8,top:-8,right:1928,bottom:1088},primary,true,true));
         assert!(!covers_bar_monitor(RECT{bottom:1032,..primary},primary,true,true));
