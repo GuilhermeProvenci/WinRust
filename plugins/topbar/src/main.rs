@@ -1005,8 +1005,10 @@ unsafe fn place(hwnd: HWND) {
     }
     let (x,w) = bar_x_w();
     SetWindowRgn(hwnd, if dock() { CreateRoundRectRgn(0, 0, w + 1, bar_h() + 1, bar_h(), bar_h()) } else { null_mut() }, 1);
-    if vert() { SetWindowPos(hwnd, HWND_TOPMOST, bar_x(), b.top, bar_h(), b.height(), SWP_NOACTIVATE); }
-    else { SetWindowPos(hwnd, HWND_TOPMOST, x, bar_y(), w, bar_h(), SWP_NOACTIVATE); }
+    // Repositioning during a game's display-mode switch must not raise the bar over it.
+    let z = if FULLSCREEN.load(Relaxed) || fullscreen_now(hwnd) { SWP_NOZORDER } else { 0 };
+    if vert() { SetWindowPos(hwnd, HWND_TOPMOST, bar_x(), b.top, bar_h(), b.height(), SWP_NOACTIVATE | z); }
+    else { SetWindowPos(hwnd, HWND_TOPMOST, x, bar_y(), w, bar_h(), SWP_NOACTIVATE | z); }
     keep_widget_above_bar();
     InvalidateRect(hwnd, null(), 0);
 }
@@ -1863,7 +1865,9 @@ unsafe fn bar_step(hwnd: HWND) {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
     let (px, py) = bar_pos();
-    SetWindowPos(hwnd, HWND_TOPMOST, px, py, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    // Sliding away must not put the topmost bar back over a fullscreen game.
+    let z = if target == 0.0 { SWP_NOZORDER } else { 0 };
+    SetWindowPos(hwnd, HWND_TOPMOST, px, py, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | z);
     if target > 0.0 { keep_widget_above_bar(); }
     if p == target {
         KillTimer(hwnd, 5);
