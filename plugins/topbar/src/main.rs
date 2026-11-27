@@ -216,6 +216,7 @@ thread_local! {
     static TIPWND: Cell<HWND> = const { Cell::new(null_mut()) };
     static SWWND: Cell<HWND> = const { Cell::new(null_mut()) }; // the Alt+Tab switcher
     static SW_THUMB: Cell<isize> = const { Cell::new(0) };
+    static SW_START_POINTER: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
     static SW_ICONS: RefCell<Vec<(HICON, bool)>> = const { RefCell::new(Vec::new()) };
     static ATTENTION: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
     static SW: RefCell<(Vec<HWND>, usize)> = const { RefCell::new((Vec::new(), 0)) }; // its windows (z-order) and selection
@@ -795,6 +796,9 @@ unsafe fn alt_tab(back: bool) {
         }).collect();
         SW_ICONS.set(icons);
         SW.set((v, if n == 1 { 0 } else if back { n - 1 } else { 1 }));
+        // Showing a popup under a stationary pointer can synthesize WM_MOUSEMOVE.
+        let mut pointer: POINT = zeroed();
+        SW_START_POINTER.set((GetCursorPos(&mut pointer) != 0).then_some((pointer.x, pointer.y)));
         let monitor=winrust_common::screens::for_window(GetForegroundWindow()).work;
         let scr = monitor.width();
         let w = (n as i32 * sc(SW_CELL) + 2 * sc(SW_PAD)).max(sc(560)).min(scr - sc(40));
@@ -811,6 +815,7 @@ unsafe fn alt_tab(back: bool) {
 /// Alt released: switch to the selected window (restored if minimized). Esc: just close.
 unsafe fn alt_done(cancel: bool) {
     clear_switcher_preview();
+    SW_START_POINTER.set(None);
     ShowWindow(SWWND.get(), SW_HIDE);
     for (icon, owned) in SW_ICONS.take() { if owned && !icon.is_null() { DestroyIcon(icon); } }
     let (v, i) = SW.take();
@@ -837,6 +842,13 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         GetClientRect(hwnd, &mut r);
         let x = (lp as u16 as i16) as i32;
         let y = ((lp >> 16) as u16 as i16) as i32;
+        if msg == WM_MOUSEMOVE {
+            let mut screen = POINT { x, y };
+            if ClientToScreen(hwnd, &mut screen) != 0 {
+                if SW_START_POINTER.get() == Some((screen.x, screen.y)) { return 0; }
+                SW_START_POINTER.set(None);
+            }
+        }
         let hit = SW.with_borrow(|(v, _)| switcher_hit(x, y, r.right, sc(SW_PAD), sc(SW_CELL), v.len()));
         if let Some(index) = hit {
             let changed = SW.with_borrow_mut(|(_, selected)| { let changed = *selected != index; *selected = index; changed });
@@ -3896,6 +3908,12 @@ mod tests {
             SWITCHING.store(true, Relaxed);
             assert_eq!(SendMessageW(popup, WM_MOUSEACTIVATE, 0, 0), MA_NOACTIVATE as isize);
             let xy = ((sc(SW_PAD + 5) as isize) << 16) | 250;
+            let mut screen = POINT { x: 250, y: sc(SW_PAD + 5) };
+            ClientToScreen(popup, &mut screen);
+            SW_START_POINTER.set(Some((screen.x, screen.y)));
+            SendMessageW(popup, WM_MOUSEMOVE, 0, xy);
+            assert_eq!(SW.with_borrow(|(_, selected)| *selected), 0, "stationary pointer must not replace the keyboard selection");
+            SW_START_POINTER.set(None);
             SendMessageW(popup, WM_MOUSEMOVE, 0, xy);
             assert_eq!(SW.with_borrow(|(_, selected)| *selected), 1, "hover must reach the switcher window procedure");
             SendMessageW(popup, WM_LBUTTONUP, 0, xy);
