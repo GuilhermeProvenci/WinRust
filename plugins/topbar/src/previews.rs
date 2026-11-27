@@ -8,6 +8,8 @@ struct Preview {
     button: i32,
     wins: Vec<HWND>,
     thumbs: Vec<isize>,
+    icons: Vec<HICON>, // owned copies, released when the preview is rebuilt or closed
+    minimized: Vec<bool>,
     page: usize,
     cols: usize,
     cell_w: i32,
@@ -25,6 +27,7 @@ pub unsafe fn close() {
     let old = STATE.with_borrow_mut(Option::take);
     if let Some(s) = old {
         for h in s.thumbs { if h != 0 { DwmUnregisterThumbnail(h); } }
+        for icon in s.icons { if !icon.is_null() { DestroyIcon(icon); } }
         DestroyWindow(s.hwnd);
     }
 }
@@ -69,16 +72,30 @@ pub unsafe fn show(button: i32) -> bool {
         class.as_ptr(), wide("Window previews").as_ptr(), WS_POPUP | WS_CLIPCHILDREN,
         0, 0, 1, 1, BAR.load(Relaxed) as HWND, null_mut(), hi, null());
     if hwnd.is_null() { return false; }
-    STATE.with_borrow_mut(|s| *s = Some(Preview { hwnd, button, wins, thumbs: vec![], page: 0, cols: 1, cell_w: sc(240), hot: -1, away: 0 }));
+    STATE.with_borrow_mut(|s| *s = Some(Preview { hwnd, button, wins, thumbs: vec![], icons: vec![], minimized: vec![], page: 0, cols: 1, cell_w: sc(240), hot: -1, away: 0 }));
     rebuild();
     SetTimer(hwnd, 1, 100, None);
     true
+}
+
+/// Prefer shell-rendered large icons; generic hosts keep their own window icon.
+unsafe fn preview_icon(w: HWND) -> HICON {
+    let exe = exe_of(w);
+    let name = exe.rsplit('\\').next().unwrap_or("");
+    let generic = matches!(name, "applicationframehost.exe" | "javaw.exe" | "java.exe" | "pythonw.exe" | "python.exe" | "mmc.exe" | "rundll32.exe" | "dllhost.exe");
+    let path = known_packaged_app(&exe).map(|id| format!(r"shell:AppsFolder\{id}")).unwrap_or(exe);
+    let icon = if path.is_empty() || generic { null_mut() } else { item_icon(&path, sc(48)) };
+    if !icon.is_null() { return icon; }
+    let borrowed = icon_of(w);
+    if borrowed.is_null() { null_mut() } else { CopyIcon(borrowed) }
 }
 
 unsafe fn rebuild() {
     STATE.with_borrow_mut(|state| {
         let Some(s) = state else { return; };
         for h in s.thumbs.drain(..) { if h != 0 { DwmUnregisterThumbnail(h); } }
+        for icon in s.icons.drain(..) { if !icon.is_null() { DestroyIcon(icon); } }
+        s.minimized = s.wins.iter().map(|&w| IsIconic(w) != 0).collect();
         let b = monitors::bounds();
         let sw = b.width();
         s.cols = page_columns(s.wins.len(), sw, sc(240), sc(12));
@@ -93,8 +110,10 @@ unsafe fn rebuild() {
         let y = if vert() { (center - height / 2).clamp(b.top + sc(4), (b.bottom - height - sc(4)).max(b.top + sc(4))) } else { pop_y(height) };
         SetWindowPos(s.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         for (i, &source) in s.wins.iter().skip(s.page * s.cols).take(s.cols).enumerate() {
+            s.icons.push(preview_icon(source));
             let mut handle = 0;
-            if DwmRegisterThumbnail(s.hwnd, source, &mut handle) >= 0 {
+            // DWM can register a minimized window but has no usable live image.
+            if IsIconic(source) == 0 && DwmRegisterThumbnail(s.hwnd, source, &mut handle) >= 0 {
                 let mut size: SIZE = zeroed();
                 DwmQueryThumbnailSourceSize(handle, &mut size);
                 let r = fit(image_rect(card_rect(s, i)), size.cx, size.cy);
@@ -134,7 +153,14 @@ unsafe fn paint(hwnd: HWND) {
             // DWM owns the live image. Unavailable/protected windows still have
             // a selectable card and title; no blocking PrintWindow capture.
             if s.thumbs.get(i).copied().unwrap_or(0) == 0 {
-                text(dc, pt!("Предпросмотр недоступен", "Preview unavailable", "Prévia indisponível"), image_rect(cr), pal().dim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                let icon = s.icons.get(i).copied().unwrap_or(null_mut());
+                if icon.is_null() {
+                    text(dc, pt!("Предпросмотр недоступен", "Preview unavailable", "Prévia indisponível"), image_rect(cr), pal().dim, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                } else {
+                    let area = image_rect(cr);
+                    let size = sc(48).min(area.right - area.left).min(area.bottom - area.top).max(1);
+                    DrawIconEx(dc, (area.left + area.right - size) / 2, (area.top + area.bottom - size) / 2, icon, size, size, 0, null_mut(), DI_NORMAL);
+                }
             }
         }
         if s.wins.len() > s.cols {
@@ -167,6 +193,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 let current = BTNS.with_borrow(|b| b.get(s.button as usize).map(|b| b.wins.clone()).unwrap_or_default());
                 let mut fresh = current.into_iter().filter(|&w| IsWindow(w) != 0).collect::<Vec<_>>();
                 let same = fresh.len() == s.wins.len() && fresh.iter().all(|w| s.wins.contains(w));
+                let state_changed = same && s.wins.iter().zip(&s.minimized).any(|(&w, &was)| (IsIconic(w) != 0) != was);
                 let dismiss = fresh.is_empty() || !fresh.iter().any(|w| s.wins.contains(w)) || fly::any_open() || (s.away != 0 && now.saturating_sub(s.away) > 400);
                 if !same && !dismiss {
                     // Keep card order stable while the system's z-order changes.
@@ -174,7 +201,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     fresh.retain(|w| !s.wins.contains(w));
                     s.wins.extend(fresh);
                 }
-                (dismiss, !same)
+                (dismiss, !same || state_changed)
             });
             if dismiss { close(); } else if changed { rebuild(); }
             0
@@ -195,7 +222,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }});
             rebuild(); 0
         }
-        WM_LBUTTONUP => {
+        WM_LBUTTONUP | WM_MBUTTONUP => {
             let x = (lp & 0xffff) as i16 as i32;
             let y = (lp >> 16) as i16 as i32;
             let selected = STATE.with_borrow(|state| state.as_ref().and_then(|s| {
@@ -203,7 +230,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }));
             if let Some((w, closing)) = selected {
                 if IsWindow(w) != 0 {
-                    if closing { close_window(w); } else {
+                    if closing || msg == WM_MBUTTONUP { close_window(w); } else {
                         close();
                         if IsIconic(w) != 0 { ShowWindow(w, SW_RESTORE); }
                         force_fg(w);
@@ -255,7 +282,8 @@ mod tests {
             SWWND.set(null_mut());
             assert!(show(1));
             assert_eq!(GetForegroundWindow(), foreground, "hover must not take keyboard focus");
-            let (popup, handles) = STATE.with_borrow(|s| { let s = s.as_ref().unwrap(); (s.hwnd, s.thumbs.clone()) });
+            let (popup, handles, icon_count) = STATE.with_borrow(|s| { let s = s.as_ref().unwrap(); (s.hwnd, s.thumbs.clone(), s.icons.len()) });
+            assert_eq!(icon_count, 2, "one icon per displayed card");
             assert_ne!(IsWindowVisible(popup), 0);
             assert_eq!(handles.len(), 2);
             for &h in &handles {
@@ -266,9 +294,16 @@ mod tests {
             }
             ShowWindow(owned.0[1], SW_SHOWMINNOACTIVE);
             ShowWindow(owned.0[2], SW_SHOWMINNOACTIVE);
+            SendMessageW(popup, WM_TIMER, 1, 0);
+            assert!(STATE.with_borrow(|s| s.as_ref().unwrap().thumbs.iter().all(|&h| h == 0)), "minimized windows use icon fallback");
+            let icons = STATE.with_borrow(|s| s.as_ref().unwrap().icons.clone());
             // Click the second thumbnail, away from its close button.
             SendMessageW(popup, WM_LBUTTONUP, 0, ((sc(100) as isize) << 16) | sc(360) as isize);
             assert!(!is_open());
+            for icon in icons.into_iter().filter(|icon| !icon.is_null()) {
+                let mut info: ICONINFO = zeroed();
+                assert_eq!(GetIconInfo(icon, &mut info), 0, "closed popups release owned icons");
+            }
             assert_eq!(IsIconic(owned.0[2]), 0, "selection restores the chosen window");
             assert_ne!(IsIconic(owned.0[1]), 0, "selection leaves the other window minimized");
             if !foreground.is_null() { SetForegroundWindow(foreground); }

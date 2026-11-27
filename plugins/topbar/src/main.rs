@@ -1270,6 +1270,15 @@ fn squirrel_matches(identity: &(String, String), executable: &str) -> bool {
     version.starts_with("app-") && name == identity.1
 }
 
+/// Suppress only the shortcut created together with our marker; never delete either pin.
+fn redundant_auto_explorer_pin(target: &str, name: &str, explorer_pin: bool, marker_created: Option<std::time::SystemTime>, link_created: Option<std::time::SystemTime>) -> bool {
+    if !explorer_pin || !target.ends_with(r"\rust-explorer\rust-explorer.exe") || !name.eq_ignore_ascii_case("rust-explorer.lnk") { return false; }
+    match (marker_created, link_created) {
+        (Some(a), Some(b)) => a.duration_since(b).or_else(|_| b.duration_since(a)).is_ok_and(|d| d <= std::time::Duration::from_secs(2)),
+        _ => false,
+    }
+}
+
 /// Pinned apps (the .lnk files Windows keeps for the taskbar) with their icons and target exe.
 unsafe fn load_pins() {
     let Some(appdata) = std::env::var_os("APPDATA") else { return };
@@ -1281,19 +1290,24 @@ unsafe fn load_pins() {
         let order: HashMap<String, usize> = saved.lines().enumerate().map(|(i, p)| (std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_lowercase(), i)).collect();
         files.sort_by_key(|p| order.get(&p.file_name().unwrap_or_default().to_string_lossy().to_lowercase()).copied().unwrap_or(usize::MAX));
     }
+    let marker = appdata_file("topbar-explorer-pin.txt");
+    let marker_created = std::fs::metadata(&marker).and_then(|m| m.created()).ok();
+    let explorer = file_explorer_exe();
+    let explorer_pinned = files.iter().any(|f| lnk_target(&wide(&f.to_string_lossy())) == explorer);
     for f in files {
         let lnk = wide(&f.to_string_lossy());
         let target = lnk_target(&lnk);
         let target = fix_msix_pin(&lnk, &target).unwrap_or(target);
+        let created = std::fs::metadata(&f).and_then(|m| m.created()).ok();
+        if redundant_auto_explorer_pin(&target, &f.file_name().unwrap_or_default().to_string_lossy(), explorer_pinned, marker_created, created) { continue; }
         let icon = lnk_icon(&lnk, &target);
         let squirrel = squirrel_shortcut(&lnk, &target);
         PINS.with_borrow_mut(|p| p.push(Pin { lnk, target, squirrel, icon }));
     }
     // once: a File Explorer button for the installed file manager (the marker keeps an unpinned one gone)
-    let marker = appdata_file("topbar-explorer-pin.txt");
     let rx = std::env::var_os("ProgramFiles").map(|pf| PathBuf::from(pf).join(r"rust-explorer\rust-explorer.exe"));
     if let Some(rx) = rx.filter(|rx| rx.is_file() && !marker.exists()) {
-        pin_exe(&rx.to_string_lossy());
+        if !explorer_pinned { pin_exe(&rx.to_string_lossy()); }
         let _ = std::fs::write(marker, "1");
     }
 }
@@ -3992,6 +4006,18 @@ mod tests {
         assert_eq!(super::row_origin(300, 50, 200, 500, 1000, 8), 300);
         assert_eq!(super::row_origin(300, 180, 200, 500, 1000, 8), 388);
         assert_eq!(super::row_origin(300, 500, 200, 500, 1000, 8), 300);
+    }
+    #[test]
+    fn only_the_proven_auto_created_explorer_pin_is_hidden() {
+        use super::redundant_auto_explorer_pin as hidden;
+        use std::time::{Duration, UNIX_EPOCH};
+        let t = UNIX_EPOCH + Duration::from_secs(100);
+        let path = r"c:\program files\rust-explorer\rust-explorer.exe";
+        assert!(hidden(path, "Rust-explorer.lnk", true, Some(t), Some(t + Duration::from_secs(1))));
+        assert!(!hidden(path, "Rust-explorer.lnk", false, Some(t), Some(t)));
+        assert!(!hidden(path, "Rust-explorer.lnk", true, None, Some(t)));
+        assert!(!hidden(path, "Rust-explorer.lnk", true, Some(t), Some(t + Duration::from_secs(3))));
+        assert!(!hidden(path, "My Explorer.lnk", true, Some(t), Some(t)));
     }
     #[test]
     fn file_manager_windows_belong_to_the_file_explorer_pin() {
