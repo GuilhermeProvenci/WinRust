@@ -252,3 +252,19 @@ impl IWebBrowser2_Impl for Browser_Impl {
     fn Resizable(&self) -> Result<windows::Win32::Foundation::VARIANT_BOOL> { nope() }
     fn SetResizable(&self, _value: windows::Win32::Foundation::VARIANT_BOOL) -> Result<()> { nope() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn both_shell_identifiers_can_be_built_for_a_real_folder() {
+        unsafe {
+            let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+            let dir = std::env::temp_dir();
+            assert!(pidl_variant(&dir, false).is_some(), "canonical folder PIDL");
+            assert!(pidl_variant(&dir, true).is_some(), "desktop-parsed folder PIDL");
+            if initialized { CoUninitialize(); }
+        }
+    }
+}
